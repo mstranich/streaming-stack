@@ -142,8 +142,8 @@ ruta que luego verán Sonarr/Radarr exactamente como `/data/...`.
   del Download Client mediante `/api/v1/downloadclient`.
 - [x] Validar dos ejecuciones consecutivas: creación inicial y actualización
   posterior del mismo Download Client sin duplicados.
-- [ ] Verificar búsqueda manual y descarga enviada a Transmission mediante la
-  integración automatizada.
+- [x] Verificar búsqueda desde Radarr usando indexers sincronizados por Prowlarr
+  y envío del torrent seleccionado a Transmission.
 - [ ] Documentar API key como secreto operativo, no en Git.
 
 **Criterio de salida:** Prowlarr reinicia sin perder datos y un indexer de prueba
@@ -151,10 +151,10 @@ responde correctamente.
 
 ### 4. Sonarr
 
-- [ ] Añadir Sonarr con `/config` y la misma raíz `/data`.
-- [ ] Configurar raíz de series en `/data/media/series`.
-- [ ] Conectar Prowlarr mediante su integración de Applications.
-- [ ] Conectar Transmission usando hostname interno `transmission` y puerto
+- [x] Añadir Sonarr con `/config` y la misma raíz `/data`.
+- [x] Configurar raíz de series en `/data/media/TV`.
+- [x] Conectar Prowlarr mediante su integración de Applications.
+- [x] Conectar Transmission usando hostname interno `transmission` y puerto
   interno `9091`.
 - [ ] Validar categorías, importación y hardlink/movimiento con contenido de
   prueba.
@@ -164,16 +164,20 @@ importación, sin Remote Path Mapping innecesario.
 
 ### 5. Radarr
 
-- [ ] Repetir el patrón de Sonarr para `/data/media/movies`.
-- [ ] Conectar Prowlarr y Transmission por DNS interno de Compose.
-- [ ] Validar categorías separadas e importación de película de prueba.
+- [x] Repetir el patrón de Sonarr para `/data/media/Movies`.
+- [x] Conectar Prowlarr y Transmission por DNS interno de Compose.
+- [ ] Validar descarga efectiva, categoría e importación de película de prueba;
+  Big Buck Bunny llegó correctamente a Transmission, pero no inició por falta
+  de seeds.
 
 **Criterio de salida:** flujo completo de película y coexistencia con Sonarr.
 
 ### 6. Bazarr
 
-- [ ] Añadir Bazarr con `/config` y acceso a `/data/media`.
-- [ ] Conectar Sonarr y Radarr por sus nombres de servicio y API keys.
+- [x] Añadir Bazarr con `/config` y acceso a `/data/media`.
+- [x] Conectar Sonarr y Radarr por sus nombres de servicio y API keys.
+- [x] Documentar que Bazarr no es una Application soportada por Prowlarr y que
+  no implementa la política Servarr `disabledForLocalAddresses`.
 - [ ] Validar descarga y almacenamiento de un subtítulo de prueba.
 
 **Criterio de salida:** Bazarr encuentra los archivos con las mismas rutas que

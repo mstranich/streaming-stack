@@ -182,9 +182,39 @@ Los scripts Python concentran la automatización del proyecto:
 Cuando se incorporen Sonarr y Radarr, `configure-stack.py` recibirá sus
 funciones para poder configurar las tres aplicaciones con el mismo comando.
 
+## Sonarr, Radarr y Bazarr
+
+Los tres servicios se publican sólo en loopback:
+
+- Sonarr: [http://localhost:8989](http://localhost:8989)
+- Radarr: [http://localhost:7878](http://localhost:7878)
+- Bazarr: [http://localhost:6767](http://localhost:6767)
+
+Sonarr utiliza `/data/media/TV` como carpeta raíz y la categoría `tv` de
+Transmission. Radarr utiliza `/data/media/Movies` y la categoría `movies`.
+Ambos reciben las credenciales compartidas, el idioma `SERVARR_UI_LANGUAGE` y
+la política `disabledForLocalAddresses`, igual que Prowlarr.
+
+Prowlarr registra Sonarr y Radarr como **Applications** mediante sus direcciones
+internas y sincronización completa de indexers. Bazarr no es una Application
+compatible de Prowlarr: es Bazarr quien consume directamente las APIs de
+Sonarr y Radarr. `configure-stack` también automatiza esas dos conexiones.
+
+Bazarr tampoco ofrece el modo `disabledForLocalAddresses` ni comparte la API
+de idioma de Servarr. El script no modifica su autenticación ni promete
+configurar el idioma de su UI; por ahora la protección efectiva es publicar su
+puerto exclusivamente en `127.0.0.1`. Sus proveedores y perfiles de idiomas de
+subtítulos se configurarán en una etapa posterior.
+
+Arrancar el stack y aplicar todos los upserts:
+
+```powershell
+docker compose up -d
+```
+
 ## Incorporación de futuros servicios
 
-Cuando se agreguen Transmission, Sonarr, Radarr y los demás componentes, podrán
+Cuando se agreguen los demás componentes, podrán
 declarar la siguiente dependencia para asegurar la estructura antes de iniciar:
 
 ```yaml

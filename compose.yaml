@@ -65,6 +65,65 @@ services:
         target: /config
     restart: unless-stopped
 
+  sonarr:
+    image: lscr.io/linuxserver/sonarr:latest
+    environment: &servarr-environment
+      PUID: ${PUID:-1000}
+      PGID: ${PGID:-1000}
+      UMASK: ${UMASK:-002}
+      TZ: ${TZ:-America/Argentina/Buenos_Aires}
+    depends_on:
+      init-data:
+        condition: service_completed_successfully
+    ports:
+      - "127.0.0.1:${SONARR_WEB_PORT:-8989}:8989"
+    volumes:
+      - type: bind
+        source: ./config/sonarr
+        target: /config
+      - type: bind
+        source: ./data
+        target: /data
+    restart: unless-stopped
+
+  radarr:
+    image: lscr.io/linuxserver/radarr:latest
+    environment: *servarr-environment
+    depends_on:
+      init-data:
+        condition: service_completed_successfully
+    ports:
+      - "127.0.0.1:${RADARR_WEB_PORT:-7878}:7878"
+    volumes:
+      - type: bind
+        source: ./config/radarr
+        target: /config
+      - type: bind
+        source: ./data
+        target: /data
+    restart: unless-stopped
+
+  bazarr:
+    image: lscr.io/linuxserver/bazarr:latest
+    environment: *servarr-environment
+    depends_on:
+      init-data:
+        condition: service_completed_successfully
+      sonarr:
+        condition: service_started
+      radarr:
+        condition: service_started
+    ports:
+      - "127.0.0.1:${BAZARR_WEB_PORT:-6767}:6767"
+    volumes:
+      - type: bind
+        source: ./config/bazarr
+        target: /config
+      - type: bind
+        source: ./data
+        target: /data
+    restart: unless-stopped
+
   configure-stack:
     image: python:3.13-alpine
     working_dir: /workspace
@@ -72,6 +131,12 @@ services:
     environment:
       PROWLARR_URL: http://prowlarr:9696
       PROWLARR_CONFIG: /config/prowlarr/config.xml
+      SONARR_URL: http://sonarr:8989
+      SONARR_CONFIG: /config/sonarr/config.xml
+      RADARR_URL: http://radarr:7878
+      RADARR_CONFIG: /config/radarr/config.xml
+      BAZARR_URL: http://bazarr:6767
+      BAZARR_CONFIG: /config/bazarr/config/config.yaml
       SERVARR_USER: ${SERVARR_USER:?Set SERVARR_USER in .env}
       SERVARR_PASS: ${SERVARR_PASS:?Set SERVARR_PASS in .env}
       SERVARR_UI_LANGUAGE: ${SERVARR_UI_LANGUAGE:-es_MX}
@@ -84,6 +149,12 @@ services:
     depends_on:
       prowlarr:
         condition: service_started
+      sonarr:
+        condition: service_started
+      radarr:
+        condition: service_started
+      bazarr:
+        condition: service_started
       transmission:
         condition: service_started
     read_only: true
@@ -95,5 +166,17 @@ services:
       - type: bind
         source: ./config/prowlarr
         target: /config/prowlarr
+        read_only: true
+      - type: bind
+        source: ./config/sonarr
+        target: /config/sonarr
+        read_only: true
+      - type: bind
+        source: ./config/radarr
+        target: /config/radarr
+        read_only: true
+      - type: bind
+        source: ./config/bazarr
+        target: /config/bazarr
         read_only: true
     restart: "no"
