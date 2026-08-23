@@ -1,4 +1,4 @@
-# Runtime data is created locally by scripts/init-data-dirs.sh.
+# Runtime data is created locally by scripts/init-data-dirs.py.
 /data/*
 !/data/.gitkeep
 
@@ -6,4 +6,3 @@
 /config/*
 !/config/.gitkeep
 /.env
-

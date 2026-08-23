@@ -2,13 +2,13 @@ name: servarr
 
 services:
   init-data:
-    image: bash:5.3.3
+    image: python:3.13-alpine
     environment:
       PUID: ${PUID:-1000}
       PGID: ${PGID:-1000}
       UMASK: ${UMASK:-002}
     working_dir: /workspace
-    command: ["bash", "scripts/init-data-dirs.sh"]
+    command: ["python", "scripts/init-data-dirs.py"]
     restart: "no"
     network_mode: none
     read_only: true
@@ -46,3 +46,54 @@ services:
         source: ./data
         target: /data
     restart: unless-stopped
+
+  prowlarr:
+    image: lscr.io/linuxserver/prowlarr:latest
+    environment:
+      PUID: ${PUID:-1000}
+      PGID: ${PGID:-1000}
+      UMASK: ${UMASK:-002}
+      TZ: ${TZ:-America/Argentina/Buenos_Aires}
+    depends_on:
+      init-data:
+        condition: service_completed_successfully
+    ports:
+      - "127.0.0.1:${PROWLARR_WEB_PORT:-9696}:9696"
+    volumes:
+      - type: bind
+        source: ./config/prowlarr
+        target: /config
+    restart: unless-stopped
+
+  configure-stack:
+    image: python:3.13-alpine
+    working_dir: /workspace
+    command: ["python", "scripts/configure-stack.py"]
+    environment:
+      PROWLARR_URL: http://prowlarr:9696
+      PROWLARR_CONFIG: /config/prowlarr/config.xml
+      SERVARR_USER: ${SERVARR_USER:?Set SERVARR_USER in .env}
+      SERVARR_PASS: ${SERVARR_PASS:?Set SERVARR_PASS in .env}
+      SERVARR_UI_LANGUAGE: ${SERVARR_UI_LANGUAGE:-es_MX}
+      TRANSMISSION_INTERNAL_HOST: transmission
+      TRANSMISSION_INTERNAL_PORT: 9091
+      TRANSMISSION_URL: http://transmission:9091
+      TRANSMISSION_URL_BASE: /transmission/
+      TRANSMISSION_USER: ${TRANSMISSION_USER:?Set TRANSMISSION_USER in .env}
+      TRANSMISSION_PASS: ${TRANSMISSION_PASS:?Set TRANSMISSION_PASS in .env}
+    depends_on:
+      prowlarr:
+        condition: service_started
+      transmission:
+        condition: service_started
+    read_only: true
+    volumes:
+      - type: bind
+        source: ./scripts
+        target: /workspace/scripts
+        read_only: true
+      - type: bind
+        source: ./config/prowlarr
+        target: /config/prowlarr
+        read_only: true
+    restart: "no"

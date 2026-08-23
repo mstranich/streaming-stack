@@ -38,7 +38,7 @@ Bash   ── herramientas y scripts del proyecto (perfil manual)
 - Configuración persistente separada por servicio bajo `./config/<servicio>`.
 - Datos bajo `./data`, inicialmente dentro de este proyecto para simplificar la
   validación. Git sólo conserva `data/.gitkeep`; las subcarpetas locales se crean
-  de forma idempotente con `scripts/init-data-dirs.sh`. Antes de cargar una
+  de forma idempotente con `scripts/init-data-dirs.py`. Antes de cargar una
   biblioteca real se decidirá su ubicación final.
 - Imágenes mantenidas por LinuxServer.io como opción inicial consistente para
   los servicios, sujetas a revisión y fijación de versión antes de producción.
@@ -91,9 +91,9 @@ interna resuelve nombres de servicio, un contenedor consumió HTTP desde otro,
 el bind mount sobre `H:` fue escribible y dos nombres enlazados conservaron el
 mismo inode con contador de enlaces `2`. Detalle en `VALIDATION.md`.
 
-### 1. Contenedor `bash`
+### 1. Contenedor de inicialización
 
-- [x] Elegir y probar la imagen oficial `bash:5.3.3`.
+- [x] Unificar la automatización en `python:3.13-alpine`.
 - [x] Configurarlo como servicio one-shot `init-data`, sin reinicio ni daemon
   permanente.
 - [x] Montar `./scripts` como `/workspace/scripts` en modo lectura y establecer
@@ -105,8 +105,8 @@ mismo inode con contador de enlaces `2`. Detalle en `VALIDATION.md`.
   reproducible en vez de instalar en cada ejecución.
 - [x] Documentar en `README.md` los comandos `docker compose up init-data` y
   `docker compose run --rm init-data`.
-- [x] Ejecutar `scripts/init-data-dirs.sh` desde este contenedor para inicializar
-  `data/`; no se necesita un servicio BusyBox adicional. Se validó su
+- [x] Ejecutar `scripts/init-data-dirs.py` desde este contenedor para inicializar
+  `data/`; no se necesita BusyBox ni Bash adicional. Se validó su
   idempotencia ejecutándolo dos veces.
 
 **Criterio de salida:** se puede abrir Bash, leer scripts del repositorio y
@@ -132,11 +132,18 @@ ruta que luego verán Sonarr/Radarr exactamente como `/data/...`.
 
 ### 3. Prowlarr
 
-- [ ] Usar como candidata `lscr.io/linuxserver/prowlarr`.
-- [ ] Persistir `/config` y publicar `9696` sólo para acceso local inicial.
+- [x] Usar `lscr.io/linuxserver/prowlarr:latest` durante esta etapa.
+- [x] Persistir `/config` y publicar `9696` sólo para acceso local inicial.
+- [x] Aplicar la identidad compartida `PUID=1000`, `PGID=1000`, `UMASK=002`.
 - [ ] Crear cuenta/autenticación y añadir un indexer de prueba permitido.
-- [ ] Verificar búsqueda manual y descarga enviada a Transmission, si se decide
-  conectar el cliente directamente.
+- [x] Crear un servicio/script one-shot `configure-stack` que, después del
+  asistente inicial, lea la API key desde `/config/config.xml`, tome las
+  credenciales de Transmission desde `.env`, pruebe la conexión y haga upsert
+  del Download Client mediante `/api/v1/downloadclient`.
+- [x] Validar dos ejecuciones consecutivas: creación inicial y actualización
+  posterior del mismo Download Client sin duplicados.
+- [ ] Verificar búsqueda manual y descarga enviada a Transmission mediante la
+  integración automatizada.
 - [ ] Documentar API key como secreto operativo, no en Git.
 
 **Criterio de salida:** Prowlarr reinicia sin perder datos y un indexer de prueba

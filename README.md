@@ -12,7 +12,7 @@ servicios se incorporarán y validarán de forma incremental.
 ## Inicializar la estructura de datos
 
 El servicio one-shot `init-data` ejecuta
-`scripts/init-data-dirs.sh` dentro de `bash:5.3.3`:
+`scripts/init-data-dirs.py` dentro de `python:3.13-alpine`:
 
 ```powershell
 docker compose up init-data
@@ -76,8 +76,14 @@ uso humano. No es necesario instalar Transmission para Windows.
    Copy-Item .env.example .env
    ```
 
-2. Editar `.env` y reemplazar obligatoriamente `TRANSMISSION_PASS=change-me`.
-   `.env` está ignorado por Git.
+2. Editar `.env` y reemplazar obligatoriamente `TRANSMISSION_PASS=change-me` y
+   `SERVARR_PASS=change-me-too`. `.env` está ignorado por Git.
+
+   `SERVARR_USER` y `SERVARR_PASS` son las credenciales Web compartidas por
+   Prowlarr y los futuros Sonarr, Radarr y Bazarr. Transmission conserva sus
+   propias variables `TRANSMISSION_USER` y `TRANSMISSION_PASS`.
+   `SERVARR_UI_LANGUAGE` define el idioma común de las interfaces *arr; el
+   valor inicial `es_MX` corresponde a Español (Latino).
 
    Para este stack se mantiene una identidad Linux compartida por defecto:
    `PUID=1000`, `PGID=1000` y `UMASK=002`. Todos los futuros servicios que
@@ -111,6 +117,70 @@ docker compose logs -f transmission
 # Detener sin borrar configuración ni datos
 docker compose down
 ```
+
+## Prowlarr Web
+
+Prowlarr centraliza los indexers de Sonarr, Radarr y otros servicios *arr. Su
+configuración persiste en `./config/prowlarr` y utiliza la identidad compartida
+`PUID`/`PGID` definida en `.env`.
+
+Iniciar Prowlarr:
+
+```powershell
+docker compose up -d prowlarr
+```
+
+Abrir [http://localhost:9696](http://localhost:9696) e ingresar con
+`SERVARR_USER` y `SERVARR_PASS`. La Web UI está enlazada únicamente a
+`127.0.0.1`. `configure-stack` habilita la autenticación por formulario y
+reconcilia esas credenciales en cada ejecución. La autenticación se omite para
+direcciones locales, pero continúa requerida para accesos no locales.
+
+Cuando se incorporen Sonarr y Radarr, Prowlarr los alcanzará por
+la red privada de Compose mediante:
+
+```text
+http://sonarr:8989
+http://radarr:7878
+```
+
+Si se configura Transmission como cliente para búsquedas manuales de Prowlarr,
+su dirección interna será:
+
+```text
+http://transmission:9091
+```
+
+No debe utilizarse `localhost` para conexiones entre contenedores.
+
+La integración se automatiza con el servicio one-shot `configure-stack`. Forma
+parte del arranque normal, por lo que este comando inicia los servidores y
+aplica la configuración:
+
+```powershell
+docker compose up
+```
+
+Para volver a ejecutar únicamente el upsert:
+
+```powershell
+docker compose run --rm configure-stack
+```
+
+El script espera a Prowlarr y Transmission, lee la API key directamente desde
+`/config`, toma ambos juegos de credenciales desde `.env`, prueba la conexión,
+crea o actualiza el Download Client y configura el acceso Web de Prowlarr
+mediante la API oficial. También valida y configura el idioma indicado por
+`SERVARR_UI_LANGUAGE`. No imprime secretos ni los guarda en el repositorio y
+puede ejecutarse nuevamente sin duplicar el cliente.
+
+Los scripts Python concentran la automatización del proyecto:
+
+- `scripts/init-data-dirs.py`: prepara filesystem, propietario y permisos.
+- `scripts/configure-stack.py`: configura APIs después del arranque.
+
+Cuando se incorporen Sonarr y Radarr, `configure-stack.py` recibirá sus
+funciones para poder configurar las tres aplicaciones con el mismo comando.
 
 ## Incorporación de futuros servicios
 
