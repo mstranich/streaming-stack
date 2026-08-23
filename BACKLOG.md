@@ -183,29 +183,26 @@ importación, sin Remote Path Mapping innecesario.
 **Criterio de salida:** Bazarr encuentra los archivos con las mismas rutas que
 Sonarr/Radarr y persiste su configuración.
 
-### 7. Validación de GPU en Rancher Desktop/Moby
+### 7. Validación de GPU en Rancher Desktop/Moby — cerrada
 
-- [ ] Identificar fabricante, modelo y controlador instalado en Windows.
-- [ ] Confirmar que la GPU es visible desde el backend WSL2 usado por Rancher
+- [x] Identificar fabricante, modelo y controlador instalado en Windows.
+- [x] Confirmar que la GPU es visible desde el backend WSL2 usado por Rancher
   Desktop.
-- [ ] Confirmar que Moby puede entregar el dispositivo a un contenedor de
+- [x] Confirmar que Moby **no puede actualmente** entregar el dispositivo a un contenedor de
   prueba sin privilegiarlo innecesariamente.
-- [ ] Ejecutar una carga de transcodificación o cómputo reproducible y registrar
-  evidencia de que usa GPU en lugar de CPU.
-- [ ] Documentar la sintaxis Compose necesaria (`devices`, CDI u otra opción
-  compatible con el fabricante) y cualquier prerrequisito del host.
-- [ ] Definir un fallback explícito a CPU si la GPU no resulta estable.
+- [x] Registrar que la carga GPU no puede ejecutarse: Moby falla al descubrir
+  el proveedor CDI porque Rancher Desktop no incorpora NVIDIA Container
+  Toolkit/runtime en Windows.
+- [x] Descartar sintaxis Compose GPU y fallback CPU para este repositorio,
+  porque Jellyfin queda instalado directamente en Windows.
 
-**Criterio de salida:** un contenedor de prueba detecta y utiliza la GPU con la
-misma configuración que se incorporará luego a Jellyfin.
+**Resultado:** limitación confirmada y etapa cerrada sin cambios de Compose para
+GPU.
 
-### 8. Jellyfin
+### 8. Jellyfin — fuera de alcance
 
-- [ ] Añadir Jellyfin usando la estrategia de aceleración decidida en la etapa
-  anterior; no configurar GPU basándose sólo en detección teórica.
-- [ ] Montar `/data/media` como sólo lectura inicialmente.
-- [ ] Crear bibliotecas de películas y series y validar escaneo/reproducción.
-- [ ] Revisar puertos de descubrimiento sólo si realmente se necesitan.
+- [x] Mantener Jellyfin instalado directamente en Windows y fuera de este
+  repositorio; Bazarr lo alcanza mediante `host.docker.internal` y API key.
 
 **Criterio de salida:** Jellyfin detecta y reproduce los medios importados sin
 capacidad de modificar descargas.

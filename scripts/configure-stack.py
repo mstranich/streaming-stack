@@ -29,6 +29,8 @@ BAZARR_URL = os.getenv("BAZARR_URL", "http://bazarr:6767").rstrip("/")
 BAZARR_CONFIG = Path(
     os.getenv("BAZARR_CONFIG", "/config/bazarr/config/config.yaml")
 )
+JELLYFIN_HOST = os.getenv("JELLYFIN_HOST", "host.docker.internal")
+JELLYFIN_PORT = int(os.getenv("JELLYFIN_PORT", "8096"))
 TRANSMISSION_NAME = os.getenv("PROWLARR_TRANSMISSION_NAME", "Transmission")
 TRANSMISSION_HOST = os.getenv("TRANSMISSION_INTERNAL_HOST", "transmission")
 TRANSMISSION_PORT = int(os.getenv("TRANSMISSION_INTERNAL_PORT", "9091"))
@@ -420,7 +422,7 @@ def configure_prowlarr_application(
 def configure_bazarr(sonarr_key: str, radarr_key: str) -> None:
     """Connect Bazarr to Sonarr/Radarr using its form-encoded settings API."""
     bazarr_key = read_bazarr_api_key()
-    form = urllib.parse.urlencode({
+    settings = {
         "settings-general-use_sonarr": "true",
         "settings-sonarr-ip": "sonarr",
         "settings-sonarr-port": "8989",
@@ -433,7 +435,16 @@ def configure_bazarr(sonarr_key: str, radarr_key: str) -> None:
         "settings-radarr-base_url": "/",
         "settings-radarr-ssl": "false",
         "settings-radarr-apikey": radarr_key,
-    }).encode("utf-8")
+    }
+    jellyfin_key = os.getenv("JELLYFIN_API_KEY", "").strip()
+    if jellyfin_key:
+        settings.update({
+            "settings-general-use_jellyfin": "true",
+            "settings-jellyfin-url": f"http://{JELLYFIN_HOST}:{JELLYFIN_PORT}",
+            "settings-jellyfin-apikey": jellyfin_key,
+            "settings-jellyfin-refresh_method": "immediate",
+        })
+    form = urllib.parse.urlencode(settings).encode("utf-8")
     request = urllib.request.Request(
         f"{BAZARR_URL}/api/system/settings",
         data=form,
@@ -455,6 +466,38 @@ def configure_bazarr(sonarr_key: str, radarr_key: str) -> None:
             f"Bazarr settings failed with HTTP {error.code}: {message[:500]}"
         ) from error
     print("Bazarr connections to Sonarr and Radarr reconciled successfully.")
+    if not jellyfin_key:
+        print("Bazarr Jellyfin integration skipped: JELLYFIN_API_KEY is empty.")
+        return
+
+    jellyfin_url = f"http://{JELLYFIN_HOST}:{JELLYFIN_PORT}"
+    test_body = urllib.parse.urlencode(
+        {"url": jellyfin_url, "apikey": jellyfin_key}
+    ).encode("utf-8")
+    test = urllib.request.Request(
+        f"{BAZARR_URL}/api/jellyfin/test-connection",
+        data=test_body,
+        method="POST",
+        headers={
+            "X-API-KEY": bazarr_key,
+            "Content-Type": "application/x-www-form-urlencoded",
+        },
+    )
+    try:
+        with urllib.request.urlopen(test, timeout=30) as response:
+            if response.status != 200:
+                raise ConfigurationError(
+                    f"Bazarr Jellyfin test returned HTTP {response.status}"
+                )
+    except urllib.error.HTTPError as error:
+        message = error.read().decode("utf-8", errors="replace")
+        raise ConfigurationError(
+            f"Bazarr Jellyfin test failed with HTTP {error.code}: {message[:500]}"
+        ) from error
+    print(
+        "Bazarr connection to external Jellyfin reconciled and tested "
+        f"({JELLYFIN_HOST}:{JELLYFIN_PORT})."
+    )
 
 
 def main() -> int:

@@ -206,6 +206,22 @@ configurar el idioma de su UI; por ahora la protección efectiva es publicar su
 puerto exclusivamente en `127.0.0.1`. Sus proveedores y perfiles de idiomas de
 subtítulos se configurarán en una etapa posterior.
 
+Jellyfin permanece instalado directamente en Windows y no forma parte de este
+Compose. Bazarr puede integrarse con él mediante la API usando:
+
+```dotenv
+JELLYFIN_HOST=host.docker.internal
+JELLYFIN_PORT=8096
+JELLYFIN_API_KEY=clave-creada-en-el-dashboard-de-jellyfin
+```
+
+La clave se crea en Jellyfin bajo **Dashboard → API Keys** y sólo se guarda en
+el `.env` ignorado por Git. Si la clave está presente, `configure-stack`
+habilita la integración, configura el método de refresco `immediate` y ejecuta
+el test de conexión de Bazarr. Si está vacía, omite únicamente esta integración
+sin impedir el resto del arranque. Las bibliotecas concretas se seleccionan
+después desde la UI de Bazarr, ya que sus identificadores dependen de Jellyfin.
+
 Arrancar el stack y aplicar todos los upserts:
 
 ```powershell

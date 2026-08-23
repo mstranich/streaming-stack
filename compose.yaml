@@ -137,6 +137,9 @@ services:
       RADARR_CONFIG: /config/radarr/config.xml
       BAZARR_URL: http://bazarr:6767
       BAZARR_CONFIG: /config/bazarr/config/config.yaml
+      JELLYFIN_HOST: ${JELLYFIN_HOST:-host.docker.internal}
+      JELLYFIN_PORT: ${JELLYFIN_PORT:-8096}
+      JELLYFIN_API_KEY: ${JELLYFIN_API_KEY:-}
       SERVARR_USER: ${SERVARR_USER:?Set SERVARR_USER in .env}
       SERVARR_PASS: ${SERVARR_PASS:?Set SERVARR_PASS in .env}
       SERVARR_UI_LANGUAGE: ${SERVARR_UI_LANGUAGE:-es_MX}
