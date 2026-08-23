@@ -78,6 +78,9 @@ Bash   ── herramientas y scripts del proyecto (perfil manual)
 
 - [ ] Definir `.env.example` (`TZ`, rutas, puertos y, si corresponde,
   `PUID`/`PGID`) sin guardar secretos.
+- [x] Adoptar una identidad Linux compartida (`PUID=1000`, `PGID=1000`) y
+  `UMASK=002` para todos los servicios que escriban en `/data`; el inicializador
+  aplica propietario/grupo y modo `775` a los directorios administrados.
 - [ ] Completar `.gitignore` para `config/`, `.env` y otros datos generados. La
   exclusión de `data/*`, preservando `data/.gitkeep`, ya está definida.
 - [ ] Elegir una política de tags: durante el spike puede usarse `latest`, pero
@@ -111,13 +114,18 @@ crear un archivo de prueba en el volumen autorizado.
 
 ### 2. Transmission
 
-- [ ] Usar como candidata `lscr.io/linuxserver/transmission`.
-- [ ] Persistir `/config`; montar la raíz común del host como `/data`.
-- [ ] Publicar UI `9091` y puertos peer TCP/UDP (candidato `51413`).
-- [ ] Definir autenticación de la UI sin commitear contraseña.
-- [ ] Configurar destino de descargas bajo `/data/torrents`.
-- [ ] Validar desde navegador, reinicio, persistencia y descarga de un archivo
-  legal de prueba.
+- [x] Usar `lscr.io/linuxserver/transmission:latest` durante esta etapa.
+- [x] Persistir `/config`; montar la raíz común del host como `/data`.
+- [x] Publicar la Web UI `9091` para acceso humano desde Windows; Transmission
+  en Docker será también el cliente de uso manual, sin instalar otro
+  Transmission nativo.
+- [x] Enlazar inicialmente la Web UI sólo a `127.0.0.1:9091`; no exponerla a
+  Internet directamente.
+- [x] Publicar los puertos peer TCP/UDP `51413`, parametrizables desde `.env`.
+- [x] Definir autenticación de la UI mediante `.env` ignorado por Git.
+- [x] Configurar y documentar el destino de descargas bajo `/data/torrents`.
+- [x] Validar Web UI/RPC autenticada, reinicio y persistencia de configuración.
+- [ ] Validar la descarga de un archivo legal de prueba.
 
 **Criterio de salida:** Transmission conserva su configuración y escribe en la
 ruta que luego verán Sonarr/Radarr exactamente como `/data/...`.
@@ -155,19 +163,7 @@ importación, sin Remote Path Mapping innecesario.
 
 **Criterio de salida:** flujo completo de película y coexistencia con Sonarr.
 
-### 6. Jellyfin
-
-- [ ] Añadir Jellyfin y elegir explícitamente estrategia de aceleración de
-  hardware; empezar por CPU si la integración de GPU con WSL/Rancher Desktop no
-  está validada.
-- [ ] Montar `/data/media` como sólo lectura inicialmente.
-- [ ] Crear bibliotecas de películas y series y validar escaneo/reproducción.
-- [ ] Revisar puertos de descubrimiento sólo si realmente se necesitan.
-
-**Criterio de salida:** Jellyfin detecta y reproduce los medios importados sin
-capacidad de modificar descargas.
-
-### 7. Bazarr
+### 6. Bazarr
 
 - [ ] Añadir Bazarr con `/config` y acceso a `/data/media`.
 - [ ] Conectar Sonarr y Radarr por sus nombres de servicio y API keys.
@@ -176,7 +172,34 @@ capacidad de modificar descargas.
 **Criterio de salida:** Bazarr encuentra los archivos con las mismas rutas que
 Sonarr/Radarr y persiste su configuración.
 
-### 8. Endurecimiento y operación
+### 7. Validación de GPU en Rancher Desktop/Moby
+
+- [ ] Identificar fabricante, modelo y controlador instalado en Windows.
+- [ ] Confirmar que la GPU es visible desde el backend WSL2 usado por Rancher
+  Desktop.
+- [ ] Confirmar que Moby puede entregar el dispositivo a un contenedor de
+  prueba sin privilegiarlo innecesariamente.
+- [ ] Ejecutar una carga de transcodificación o cómputo reproducible y registrar
+  evidencia de que usa GPU en lugar de CPU.
+- [ ] Documentar la sintaxis Compose necesaria (`devices`, CDI u otra opción
+  compatible con el fabricante) y cualquier prerrequisito del host.
+- [ ] Definir un fallback explícito a CPU si la GPU no resulta estable.
+
+**Criterio de salida:** un contenedor de prueba detecta y utiliza la GPU con la
+misma configuración que se incorporará luego a Jellyfin.
+
+### 8. Jellyfin
+
+- [ ] Añadir Jellyfin usando la estrategia de aceleración decidida en la etapa
+  anterior; no configurar GPU basándose sólo en detección teórica.
+- [ ] Montar `/data/media` como sólo lectura inicialmente.
+- [ ] Crear bibliotecas de películas y series y validar escaneo/reproducción.
+- [ ] Revisar puertos de descubrimiento sólo si realmente se necesitan.
+
+**Criterio de salida:** Jellyfin detecta y reproduce los medios importados sin
+capacidad de modificar descargas.
+
+### 9. Endurecimiento y operación
 
 - [ ] Añadir healthchecks sólo donde exista una comprobación fiable.
 - [ ] Definir `restart`, límites razonables y rotación de logs.

@@ -2,3 +2,8 @@
 /data/*
 !/data/.gitkeep
 
+# Per-service runtime configuration and local secrets.
+/config/*
+!/config/.gitkeep
+/.env
+
