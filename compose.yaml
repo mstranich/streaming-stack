@@ -1,0 +1,19 @@
+name: servarr
+
+services:
+  init-data:
+    image: bash:5.3.3
+    working_dir: /workspace
+    command: ["bash", "scripts/init-data-dirs.sh"]
+    restart: "no"
+    network_mode: none
+    read_only: true
+    volumes:
+      - type: bind
+        source: ./scripts
+        target: /workspace/scripts
+        read_only: true
+      - type: bind
+        source: ./data
+        target: /workspace/data
+

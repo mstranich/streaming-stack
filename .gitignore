@@ -1,0 +1,4 @@
+# Runtime data is created locally by scripts/init-data-dirs.sh.
+/data/*
+!/data/.gitkeep
+

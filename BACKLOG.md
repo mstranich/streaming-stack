@@ -1,0 +1,221 @@
+# Servarr media stack — propuesta y backlog
+
+> Estado: exploración inicial. Este documento registra decisiones, incógnitas y
+> criterios de aceptación; todavía no define el `compose.yaml` definitivo.
+
+## Objetivo
+
+Construir y validar el stack **un servicio web por vez** sobre Windows con
+Rancher Desktop, conservando rutas internas coherentes para descargas y medios.
+
+```text
+Prowlarr ──indexers──> Sonarr / Radarr ──descargas──> Transmission
+                              │                            │
+                              └──── importa / hardlink ────┘
+                                           │
+                                      /data/media
+                                           │
+                                        Jellyfin
+
+Bazarr ── subtítulos ──> bibliotecas administradas por Sonarr / Radarr
+Bash   ── herramientas y scripts del proyecto (perfil manual)
+```
+
+## Alcance inicial propuesto
+
+- Rancher Desktop con motor **Moby/dockerd**, para disponer de Docker API y
+  Docker CLI/Compose.
+- Una red privada de Compose compartida por todos los servicios. Las APIs se
+  consumirán mediante DNS interno (`http://prowlarr:9696`,
+  `http://transmission:9091`, `http://sonarr:8989`, etc.); los puertos del host
+  se reservan para acceso humano y no para comunicación entre contenedores.
+- Servicios previstos: `bash`, `transmission`, `prowlarr`, `sonarr`, `radarr`,
+  `jellyfin` y `bazarr`.
+- Acceso inicial mediante puertos publicados en `localhost`; sin proxy inverso.
+- Una sola raíz interna `/data` compartida por Transmission, Sonarr, Radarr,
+  Jellyfin y Bazarr. Esto evita traducciones de rutas y permite investigar
+  hardlinks/movimientos atómicos.
+- Configuración persistente separada por servicio bajo `./config/<servicio>`.
+- Datos bajo `./data`, inicialmente dentro de este proyecto para simplificar la
+  validación. Git sólo conserva `data/.gitkeep`; las subcarpetas locales se crean
+  de forma idempotente con `scripts/init-data-dirs.sh`. Antes de cargar una
+  biblioteca real se decidirá su ubicación final.
+- Imágenes mantenidas por LinuxServer.io como opción inicial consistente para
+  los servicios, sujetas a revisión y fijación de versión antes de producción.
+
+## Decisiones de alcance ya tomadas
+
+- [x] Reemplazar Jackett por Prowlarr.
+- [x] Reemplazar qBittorrent por Transmission.
+- [x] No incluir Caddy en la primera etapa.
+- [x] No incluir todavía FlareSolverr, Jellyseerr ni Wizarr.
+- [x] Incorporar un contenedor de Bash para ejecutar scripts/comandos Linux.
+- [x] Avanzar servicio por servicio, con prueba y documentación antes de sumar
+  el siguiente.
+
+## Backlog por etapas
+
+### 0. Base de Rancher Desktop, red y almacenamiento
+
+- [x] Confirmar que Rancher Desktop usa `dockerd (moby)`, no `containerd`.
+- [x] Registrar versiones de Rancher Desktop, Docker CLI y Compose (`docker
+  version` y `docker compose version`).
+- [x] Confirmar que Compose puede montar rutas relativas desde `H:\\Servarr`.
+- [x] Probar creación, modificación y lectura de archivos desde host y
+  contenedor en `./config` y `./data`.
+- [x] Probar explícitamente hardlinks dentro del mismo montaje `/data` y
+  documentar si NTFS + WSL/Rancher Desktop los preserva correctamente.
+- [x] Validar red privada, DNS por nombre de servicio y consumo HTTP de una API
+  simulada entre dos servicios de Compose.
+- [x] Definir la estructura inicial y crearla mediante un script idempotente:
+
+  ```text
+  data/
+  ├── torrents/{movies,music,books,tv}/
+  ├── usenet/{movies,music,books,tv}/
+  └── media/{Movies,Music,Books,TV}/
+  ```
+
+- [ ] Definir `.env.example` (`TZ`, rutas, puertos y, si corresponde,
+  `PUID`/`PGID`) sin guardar secretos.
+- [ ] Completar `.gitignore` para `config/`, `.env` y otros datos generados. La
+  exclusión de `data/*`, preservando `data/.gitkeep`, ya está definida.
+- [ ] Elegir una política de tags: durante el spike puede usarse `latest`, pero
+  la configuración reproducible debe fijar versiones/digests.
+
+**Resultado validado el 2026-08-23:** Compose funciona desde PowerShell, la red
+interna resuelve nombres de servicio, un contenedor consumió HTTP desde otro,
+el bind mount sobre `H:` fue escribible y dos nombres enlazados conservaron el
+mismo inode con contador de enlaces `2`. Detalle en `VALIDATION.md`.
+
+### 1. Contenedor `bash`
+
+- [x] Elegir y probar la imagen oficial `bash:5.3.3`.
+- [x] Configurarlo como servicio one-shot `init-data`, sin reinicio ni daemon
+  permanente.
+- [x] Montar `./scripts` como `/workspace/scripts` en modo lectura y establecer
+  `/workspace` como directorio de trabajo.
+- [x] Montar únicamente `./data` con escritura; desactivar red y usar el sistema
+  raíz del contenedor como sólo lectura.
+- [ ] Añadir utilidades únicamente cuando exista un caso concreto (`curl`,
+  `jq`, `git`, etc.); si hacen falta varias, crear un Dockerfile pequeño y
+  reproducible en vez de instalar en cada ejecución.
+- [x] Documentar en `README.md` los comandos `docker compose up init-data` y
+  `docker compose run --rm init-data`.
+- [x] Ejecutar `scripts/init-data-dirs.sh` desde este contenedor para inicializar
+  `data/`; no se necesita un servicio BusyBox adicional. Se validó su
+  idempotencia ejecutándolo dos veces.
+
+**Criterio de salida:** se puede abrir Bash, leer scripts del repositorio y
+crear un archivo de prueba en el volumen autorizado.
+
+### 2. Transmission
+
+- [ ] Usar como candidata `lscr.io/linuxserver/transmission`.
+- [ ] Persistir `/config`; montar la raíz común del host como `/data`.
+- [ ] Publicar UI `9091` y puertos peer TCP/UDP (candidato `51413`).
+- [ ] Definir autenticación de la UI sin commitear contraseña.
+- [ ] Configurar destino de descargas bajo `/data/torrents`.
+- [ ] Validar desde navegador, reinicio, persistencia y descarga de un archivo
+  legal de prueba.
+
+**Criterio de salida:** Transmission conserva su configuración y escribe en la
+ruta que luego verán Sonarr/Radarr exactamente como `/data/...`.
+
+### 3. Prowlarr
+
+- [ ] Usar como candidata `lscr.io/linuxserver/prowlarr`.
+- [ ] Persistir `/config` y publicar `9696` sólo para acceso local inicial.
+- [ ] Crear cuenta/autenticación y añadir un indexer de prueba permitido.
+- [ ] Verificar búsqueda manual y descarga enviada a Transmission, si se decide
+  conectar el cliente directamente.
+- [ ] Documentar API key como secreto operativo, no en Git.
+
+**Criterio de salida:** Prowlarr reinicia sin perder datos y un indexer de prueba
+responde correctamente.
+
+### 4. Sonarr
+
+- [ ] Añadir Sonarr con `/config` y la misma raíz `/data`.
+- [ ] Configurar raíz de series en `/data/media/series`.
+- [ ] Conectar Prowlarr mediante su integración de Applications.
+- [ ] Conectar Transmission usando hostname interno `transmission` y puerto
+  interno `9091`.
+- [ ] Validar categorías, importación y hardlink/movimiento con contenido de
+  prueba.
+
+**Criterio de salida:** flujo completo de serie de prueba desde búsqueda hasta
+importación, sin Remote Path Mapping innecesario.
+
+### 5. Radarr
+
+- [ ] Repetir el patrón de Sonarr para `/data/media/movies`.
+- [ ] Conectar Prowlarr y Transmission por DNS interno de Compose.
+- [ ] Validar categorías separadas e importación de película de prueba.
+
+**Criterio de salida:** flujo completo de película y coexistencia con Sonarr.
+
+### 6. Jellyfin
+
+- [ ] Añadir Jellyfin y elegir explícitamente estrategia de aceleración de
+  hardware; empezar por CPU si la integración de GPU con WSL/Rancher Desktop no
+  está validada.
+- [ ] Montar `/data/media` como sólo lectura inicialmente.
+- [ ] Crear bibliotecas de películas y series y validar escaneo/reproducción.
+- [ ] Revisar puertos de descubrimiento sólo si realmente se necesitan.
+
+**Criterio de salida:** Jellyfin detecta y reproduce los medios importados sin
+capacidad de modificar descargas.
+
+### 7. Bazarr
+
+- [ ] Añadir Bazarr con `/config` y acceso a `/data/media`.
+- [ ] Conectar Sonarr y Radarr por sus nombres de servicio y API keys.
+- [ ] Validar descarga y almacenamiento de un subtítulo de prueba.
+
+**Criterio de salida:** Bazarr encuentra los archivos con las mismas rutas que
+Sonarr/Radarr y persiste su configuración.
+
+### 8. Endurecimiento y operación
+
+- [ ] Añadir healthchecks sólo donde exista una comprobación fiable.
+- [ ] Definir `restart`, límites razonables y rotación de logs.
+- [ ] Revisar exposición: enlazar UIs a `127.0.0.1` mientras no haya acceso LAN
+  deliberado.
+- [ ] Evitar privilegios, Docker socket y secretos dentro del repositorio.
+- [ ] Crear scripts idempotentes para inicialización y diagnóstico.
+- [ ] Documentar backup/restore de `config/` y qué partes de `data/` se respaldan.
+- [ ] Validar actualización servicio por servicio y rollback.
+- [ ] Sólo después evaluar Caddy/TLS y los servicios postergados.
+
+## Incógnitas que debemos resolver antes del Compose definitivo
+
+1. **Ubicación real de medios:** ¿seguirán en `H:` o irán a otro disco/ruta?
+2. **Hardlinks sobre Windows:** la prueba básica sobre `H:` resultó exitosa;
+   falta repetirla con archivos grandes y el flujo real Transmission → *arr.
+3. **Acceso:** ¿sólo `localhost`, toda la LAN o eventualmente Internet? La
+   respuesta cambia puertos, autenticación y proxy/TLS.
+4. **GPU de Jellyfin:** fabricante/modelo y disponibilidad dentro de la VM WSL.
+5. **Identidad de archivos:** validar si `PUID=1000`/`PGID=1000` es apropiado en
+   este backend; no asumir que los permisos se comportan igual que en Linux
+   nativo.
+6. **Bash:** qué comandos concretos deberá ejecutar y qué montajes necesita.
+7. **Contenido adicional:** confirmar si Lidarr/música queda fuera o entra en
+   una fase posterior.
+
+## Servicios expresamente postergados
+
+- Caddy / proxy inverso / TLS.
+- FlareSolverr.
+- Jellyseerr.
+- Wizarr.
+- Clonado y build local de Prowlarr.
+
+## Fuentes de referencia
+
+- [Servarr Wiki — Docker Guide](https://wiki.servarr.com/docker-guide)
+- [Pelado Nerdworks — media-stack](https://github.com/Pelado-Nerdworks/media-stack)
+- [Rancher Desktop — selección de container engine](https://docs.rancherdesktop.io/ui/preferences/container-engine/general/)
+- [LinuxServer.io — Prowlarr](https://docs.linuxserver.io/images/docker-prowlarr/)
+- [LinuxServer.io — Transmission](https://docs.linuxserver.io/images/docker-transmission/)
+- [Repositorio upstream de Prowlarr](https://github.com/Prowlarr/Prowlarr)
