@@ -295,6 +295,33 @@ repite las integraciones de Transmission, Prowlarr, FlareSolverr o Bazarr y es
 seguro volver a ejecutarlo después de cambiar perfiles o URLs. El arranque
 normal conserva además la reconciliación de Seerr dentro de `configure-stack`.
 
+#### Acceso desde la red local en Windows
+
+Rancher Desktop publica los puertos de Windows únicamente en `localhost`. El
+Compose conserva Seerr en `127.0.0.1` y los scripts de host crean un portproxy
+TCP reversible hacia la IP concreta del equipo, sin usar `0.0.0.0`:
+
+```dotenv
+SEERR_LAN_LISTEN_ADDRESS=192.168.1.2
+SEERR_LAN_HOSTNAMES=raptorbox-z790
+SEERR_LAN_ALLOWED_REMOTES=192.168.1.0/24
+```
+
+Ejecutar PowerShell **como administrador**:
+
+```powershell
+# Habilitar portproxy y regla de firewall Private limitada a 192.168.1.0/24
+.\scripts\enable-seerr-lan.ps1
+
+# Eliminar ambos sin detener Seerr ni afectar localhost
+.\scripts\disable-seerr-lan.ps1
+```
+
+La escucha siempre se crea sobre `SEERR_LAN_LISTEN_ADDRESS`. Los nombres de
+`SEERR_LAN_HOSTNAMES` sólo documentan URLs alternativas: cada cliente debe poder
+resolverlos mediante DNS, LLMNR/NetBIOS o su archivo `hosts` hacia esa misma IP.
+El portproxy es TCP y no requiere habilitar `trustProxy` en Seerr.
+
 Mientras `initialized=false`, el configurador informa que Seerr queda diferido
 y continúa sin modificarlo. Después del asistente, reconcilia idioma, título,
 Jellyfin y los servicios Sonarr/Radarr. Seerr 3.4.1 devuelve HTTP 404 al intentar
