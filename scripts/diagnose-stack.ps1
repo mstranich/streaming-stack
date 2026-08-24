@@ -4,7 +4,7 @@ Write-Host "== Compose container state and health =="
 docker compose ps
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-$services = @("transmission", "prowlarr", "sonarr", "radarr", "bazarr")
+$services = @("transmission", "prowlarr", "flaresolverr", "sonarr", "radarr", "bazarr")
 $failed = $false
 foreach ($service in $services) {
     $id = docker compose ps -q $service

@@ -178,6 +178,28 @@ mediante la API oficial. También valida y configura el idioma indicado por
 `SERVARR_UI_LANGUAGE`. No imprime secretos ni los guarda en el repositorio y
 puede ejecutarse nuevamente sin duplicar el cliente.
 
+### FlareSolverr
+
+FlareSolverr se ejecuta como proxy anti-bot interno para los indexers de
+Prowlarr que lo necesiten. No publica ningún puerto en Windows: Prowlarr lo
+alcanza exclusivamente por la red privada de Compose en
+`http://flaresolverr:8191`.
+
+`configure-stack` espera su healthcheck y crea o actualiza de forma idempotente
+el **Indexer Proxy** llamado `FlareSolverr`, probando la conexión antes de
+guardarlo. También crea el tag `flaresolver` y lo asigna al proxy. Para utilizar
+FlareSolverr, se debe asignar ese mismo tag a cada indexer protegido; así los
+demás indexers no envían tráfico innecesario por el proxy.
+
+Los valores operativos se ajustan desde `.env`:
+
+```dotenv
+FLARESOLVERR_LOG_LEVEL=info
+FLARESOLVERR_LOG_HTML=false
+FLARESOLVERR_TAG=flaresolver
+FLARESOLVERR_REQUEST_TIMEOUT=60
+```
+
 Los scripts Python concentran la automatización del proyecto:
 
 - `scripts/init-data-dirs.py`: prepara filesystem, propietario y permisos.
@@ -270,7 +292,7 @@ libre y Jellyfin externo. No imprime contraseñas ni API keys. Para investigar:
 
 ```powershell
 docker compose ps
-docker compose logs --tail 200 prowlarr sonarr radarr bazarr transmission
+docker compose logs --tail 200 prowlarr flaresolverr sonarr radarr bazarr transmission
 ```
 
 ### Backup y restauración

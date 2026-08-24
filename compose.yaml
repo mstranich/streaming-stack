@@ -89,6 +89,21 @@ services:
       retries: 5
       start_period: 30s
 
+  flaresolverr:
+    <<: *service-hardening
+    image: ${FLARESOLVERR_IMAGE:-ghcr.io/flaresolverr/flaresolverr:v3.5.0}
+    environment:
+      TZ: ${TZ:-America/Argentina/Buenos_Aires}
+      LOG_LEVEL: ${FLARESOLVERR_LOG_LEVEL:-info}
+      LOG_HTML: ${FLARESOLVERR_LOG_HTML:-false}
+      CAPTCHA_SOLVER: none
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8191/', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
   sonarr:
     <<: *service-hardening
     image: ${SONARR_IMAGE:-lscr.io/linuxserver/sonarr:version-4.0.19.2979}
@@ -173,6 +188,9 @@ services:
     environment:
       PROWLARR_URL: http://prowlarr:9696
       PROWLARR_CONFIG: /config/prowlarr/config.xml
+      FLARESOLVERR_URL: http://flaresolverr:8191
+      FLARESOLVERR_TAG: ${FLARESOLVERR_TAG:-flaresolver}
+      FLARESOLVERR_REQUEST_TIMEOUT: ${FLARESOLVERR_REQUEST_TIMEOUT:-60}
       SONARR_URL: http://sonarr:8989
       SONARR_CONFIG: /config/sonarr/config.xml
       RADARR_URL: http://radarr:7878
@@ -193,6 +211,8 @@ services:
       TRANSMISSION_PASS: ${TRANSMISSION_PASS:?Set TRANSMISSION_PASS in .env}
     depends_on:
       prowlarr:
+        condition: service_healthy
+      flaresolverr:
         condition: service_healthy
       sonarr:
         condition: service_healthy

@@ -14,6 +14,7 @@ from pathlib import Path
 SERVICES = {
     "Transmission": ("transmission", 9091, "/transmission/web/"),
     "Prowlarr": ("prowlarr", 9696, "/ping"),
+    "FlareSolverr": ("flaresolverr", 8191, "/"),
     "Sonarr": ("sonarr", 8989, "/ping"),
     "Radarr": ("radarr", 7878, "/ping"),
     "Bazarr": ("bazarr", 6767, "/"),

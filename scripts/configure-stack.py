@@ -21,6 +21,12 @@ PROWLARR_URL = os.getenv("PROWLARR_URL", "http://prowlarr:9696").rstrip("/")
 PROWLARR_CONFIG = Path(
     os.getenv("PROWLARR_CONFIG", "/config/prowlarr/config.xml")
 )
+FLARESOLVERR_URL = os.getenv(
+    "FLARESOLVERR_URL", "http://flaresolverr:8191"
+).rstrip("/")
+FLARESOLVERR_NAME = os.getenv("PROWLARR_FLARESOLVERR_NAME", "FlareSolverr")
+FLARESOLVERR_TAG = os.getenv("FLARESOLVERR_TAG", "flaresolver").strip()
+FLARESOLVERR_REQUEST_TIMEOUT = int(os.getenv("FLARESOLVERR_REQUEST_TIMEOUT", "60"))
 SONARR_URL = os.getenv("SONARR_URL", "http://sonarr:8989").rstrip("/")
 SONARR_CONFIG = Path(os.getenv("SONARR_CONFIG", "/config/sonarr/config.xml"))
 RADARR_URL = os.getenv("RADARR_URL", "http://radarr:7878").rstrip("/")
@@ -189,8 +195,15 @@ def set_field(resource: dict[str, Any], name: str, value: Any) -> None:
             field["value"] = value
             return
     raise ConfigurationError(
-        f"Prowlarr Transmission schema does not contain field '{name}'"
+        f"Prowlarr schema does not contain field '{name}'"
     )
+
+
+def set_optional_field(resource: dict[str, Any], name: str, value: Any) -> None:
+    for field in resource.get("fields", []):
+        if str(field.get("name", "")).casefold() == name.casefold():
+            field["value"] = value
+            return
 
 
 def transmission_resource(base: dict[str, Any]) -> dict[str, Any]:
@@ -256,6 +269,61 @@ def configure_prowlarr_transmission(api_key: str) -> None:
     print(
         f"Prowlarr download client '{saved.get('name', TRANSMISSION_NAME)}' "
         f"{action}d and tested successfully."
+    )
+
+
+def configure_prowlarr_flaresolverr(api_key: str) -> None:
+    """Create or update Prowlarr's internal FlareSolverr indexer proxy."""
+    if not FLARESOLVERR_TAG:
+        raise ConfigurationError("FLARESOLVERR_TAG cannot be empty")
+    tags = request_json("GET", "/api/v1/tag", api_key)
+    tag = next(
+        (item for item in tags
+         if str(item.get("label", "")).casefold() == FLARESOLVERR_TAG.casefold()),
+        None,
+    )
+    if tag is None:
+        tag = request_json("POST", "/api/v1/tag", api_key, {"label": FLARESOLVERR_TAG})
+    tag_id = tag.get("id")
+    if not tag_id:
+        raise ConfigurationError(f"Prowlarr tag '{FLARESOLVERR_TAG}' has no id")
+
+    proxies = request_json("GET", "/api/v1/indexerproxy", api_key)
+    existing = next(
+        (
+            proxy for proxy in proxies
+            if str(proxy.get("implementation", "")).casefold() == "flaresolverr"
+            and str(proxy.get("name", "")).casefold() == FLARESOLVERR_NAME.casefold()
+        ),
+        None,
+    )
+    if existing is None:
+        schemas = request_json("GET", "/api/v1/indexerproxy/schema", api_key)
+        schema = next(
+            (item for item in schemas
+             if str(item.get("implementation", "")).casefold() == "flaresolverr"),
+            None,
+        )
+        if schema is None:
+            raise ConfigurationError("Prowlarr did not return a FlareSolverr schema")
+        resource = deepcopy(schema)
+        method, path, action = "POST", "/api/v1/indexerproxy", "create"
+    else:
+        resource = deepcopy(existing)
+        proxy_id = resource.get("id")
+        if not proxy_id:
+            raise ConfigurationError("Existing FlareSolverr proxy has no id")
+        method, path, action = "PUT", f"/api/v1/indexerproxy/{proxy_id}", "update"
+
+    resource["name"] = FLARESOLVERR_NAME
+    resource["tags"] = [tag_id]
+    set_field(resource, "host", FLARESOLVERR_URL)
+    set_optional_field(resource, "requestTimeout", FLARESOLVERR_REQUEST_TIMEOUT)
+    request_json("POST", "/api/v1/indexerproxy/test", api_key, resource)
+    request_json(method, path, api_key, resource)
+    print(
+        f"Prowlarr indexer proxy '{FLARESOLVERR_NAME}' {action}d and tested "
+        f"successfully with tag '{FLARESOLVERR_TAG}'."
     )
 
 
@@ -511,6 +579,7 @@ def main() -> int:
         sonarr_key = read_api_key(SONARR_CONFIG, "Sonarr")
         radarr_key = read_api_key(RADARR_CONFIG, "Radarr")
         configure_prowlarr_transmission(prowlarr_key)
+        configure_prowlarr_flaresolverr(prowlarr_key)
         configure_prowlarr_ui(prowlarr_key)
         configure_prowlarr_authentication(prowlarr_key)
         configure_arr_web("Sonarr", SONARR_URL, sonarr_key)
