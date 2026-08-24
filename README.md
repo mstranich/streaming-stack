@@ -3,6 +3,10 @@
 Stack multimedia en construcción para Windows con Rancher Desktop. Los
 servicios se incorporarán y validarán de forma incremental.
 
+> Estado: alcance funcional inicial completado. Las imágenes están fijadas a
+> versiones legibles validadas y la operación se realiza con controles de salud,
+> diagnóstico y backup documentados.
+
 ## Requisitos
 
 - Rancher Desktop iniciado con el motor **Moby/dockerd**.
@@ -228,6 +232,117 @@ Arrancar el stack y aplicar todos los upserts:
 docker compose up -d
 ```
 
+## Endurecimiento operativo
+
+Los servicios permanentes usan `restart: unless-stopped`,
+`no-new-privileges`, healthchecks HTTP y rotación `json-file`. `init-data`,
+`configure-stack` y las herramientas del perfil `ops` son procesos one-shot y
+conservan `restart: "no"`. Los límites de logs y la alarma de disco se pueden
+ajustar en `.env`:
+
+```dotenv
+LOG_MAX_SIZE=10m
+LOG_MAX_FILES=3
+MIN_FREE_SPACE_GB=20
+```
+
+Docker no impone aquí una cuota al bind mount `./data`: el umbral sólo hace
+fallar el diagnóstico antes de que el disco se agote. Los límites de velocidad,
+ratio, horarios y retención se configuran deliberadamente en Transmission.
+
+Las UIs permanecen publicadas en `127.0.0.1`; únicamente el puerto peer de
+Transmission está disponible en todas las interfaces. No se monta el socket de
+Docker ni se usan contenedores privilegiados. Para acceso desde fuera del
+equipo se debe incorporar primero VPN o proxy con TLS; no se deben publicar las
+UIs directamente en Internet.
+
+### Diagnóstico
+
+Ejecutar desde PowerShell:
+
+```powershell
+.\scripts\diagnose-stack.ps1
+```
+
+El wrapper comprueba estado y health de los contenedores y luego ejecuta una
+sonda sin privilegios sobre DNS interno, HTTP, estructura `/data`, espacio
+libre y Jellyfin externo. No imprime contraseñas ni API keys. Para investigar:
+
+```powershell
+docker compose ps
+docker compose logs --tail 200 prowlarr sonarr radarr bazarr transmission
+```
+
+### Backup y restauración
+
+El backup contiene `config/` y `.env`, por lo tanto contiene bases de datos,
+contraseñas y API keys. `backups/` está ignorado por Git; copie cada archivo y
+su `.sha256` a un almacenamiento externo protegido.
+
+```powershell
+# Crear backup con checksum SHA-256
+docker compose --profile ops run --rm backup-config
+
+# Listar los archivos creados
+Get-ChildItem .\backups\servarr-config-*
+```
+
+Una copia sólo cuenta como válida después de probar la restauración. Para
+restaurar, detener primero todo el stack y seleccionar únicamente el nombre del
+archivo, sin rutas:
+
+```powershell
+docker compose down
+$env:RESTORE_ARCHIVE = "servarr-config-AAAAMMDDTHHMMSSZ.tar.gz"
+docker compose --profile ops run --rm restore-config
+Remove-Item Env:RESTORE_ARCHIVE
+docker compose up -d
+.\scripts\diagnose-stack.ps1
+```
+
+El restaurador verifica el checksum y rechaza rutas, enlaces o miembros no
+permitidos antes de reemplazar `config/` y `.env`. No respalda torrents ni
+medios; `data/media` debe tener su propia estrategia de copia si no existe otra
+copia recuperable.
+
+### Secretos
+
+- `.env`, `config/` y `backups/` nunca deben agregarse a Git.
+- `.env.example` contiene sólo credenciales ficticias y versiones públicas.
+- No copiar salidas de configuración completas a incidencias o documentación.
+- Si una API key se filtra, revocarla/regenerarla en la aplicación y ejecutar
+  nuevamente `configure-stack`.
+- Mantener una copia protegida de `.env` junto al backup; quien pueda leer el
+  archivo puede acceder a todas las aplicaciones.
+
+## Actualización y rollback
+
+Las imágenes no usan `latest`: `.env` fija tags de versión legibles validados. Se
+actualiza **un servicio por vez**:
+
+1. Leer las notas de la nueva versión y confirmar compatibilidad.
+2. Crear un backup y copiarlo fuera del repositorio.
+3. Guardar el tag anterior de la variable `*_IMAGE`.
+4. Elegir el nuevo tag de versión y cambiar sólo esa variable en `.env` y
+   `.env.example`.
+5. Ejecutar `docker compose pull <servicio>` y luego
+   `docker compose up -d <servicio>`.
+6. Esperar `healthy`, revisar sus logs y ejecutar
+   `.\scripts\diagnose-stack.ps1`.
+7. Verificar manualmente la integración relevante antes de actualizar otro.
+
+Si falla, restaurar el tag anterior y recrear el servicio:
+
+```powershell
+docker compose pull <servicio>
+docker compose up -d --force-recreate <servicio>
+```
+
+Si la aplicación migró su base de datos de forma incompatible, mantener el
+stack detenido, restaurar el backup correspondiente y volver a iniciar. No se
+debe ejecutar `docker compose down -v`: los datos usan bind mounts, pero ese
+comando establece un precedente peligroso para futuros volúmenes.
+
 ## Incorporación de futuros servicios
 
 Cuando se agreguen los demás componentes, podrán
@@ -244,5 +359,4 @@ de Compose utilizando nombres DNS internos, no `localhost`.
 
 ## Documentación del proyecto
 
-- [`BACKLOG.md`](BACKLOG.md): alcance, orden de incorporación y pendientes.
 - [`VALIDATION.md`](VALIDATION.md): pruebas realizadas sobre Rancher Desktop.

@@ -6,3 +6,7 @@
 /config/*
 !/config/.gitkeep
 /.env
+
+# Local backups contain application databases, API keys and credentials.
+/backups/*
+!/backups/.gitkeep
