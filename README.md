@@ -208,13 +208,14 @@ Los scripts Python concentran la automatización del proyecto:
 Cuando se incorporen Sonarr y Radarr, `configure-stack.py` recibirá sus
 funciones para poder configurar las tres aplicaciones con el mismo comando.
 
-## Sonarr, Radarr y Bazarr
+## Sonarr, Radarr, Bazarr y Seerr
 
 Los tres servicios se publican sólo en loopback:
 
 - Sonarr: [http://localhost:8989](http://localhost:8989)
 - Radarr: [http://localhost:7878](http://localhost:7878)
 - Bazarr: [http://localhost:6767](http://localhost:6767)
+- Seerr: [http://localhost:5055](http://localhost:5055)
 
 Sonarr utiliza `/data/media/TV` como carpeta raíz y la categoría `tv` de
 Transmission. Radarr utiliza `/data/media/Movies` y la categoría `movies`.
@@ -252,6 +253,59 @@ Arrancar el stack y aplicar todos los upserts:
 
 ```powershell
 docker compose up -d
+```
+
+### Seerr (antes Jellyseerr)
+
+Seerr ofrece la interfaz de solicitudes y se comunica directamente con
+Jellyfin, Sonarr y Radarr. No necesita conexión directa a Prowlarr,
+Transmission o Bazarr. Su configuración SQLite reside en el volumen nombrado
+`seerr-config`, no en un bind mount de Windows, para evitar problemas de
+locking y corrupción documentados por el proyecto.
+
+Durante el asistente Seerr puede mostrar que `/app/config` no está montado. Es
+un falso positivo conocido con volúmenes nombrados: `docker inspect` debe
+mostrar `volume ... /app/config`. En este stack también se verificó que
+`settings.json` conserva el mismo checksum después de `docker compose restart
+seerr`. No reemplazar el volumen por un bind mount de Windows para ocultar el
+aviso.
+
+Antes del primer arranque, generar una clave dedicada y definir las URLs de
+Jellyfin en `.env`:
+
+```dotenv
+SEERR_API_KEY=secreto-aleatorio-de-64-caracteres
+SEERR_JELLYFIN_INTERNAL_URL=http://host.docker.internal:8096
+SEERR_JELLYFIN_EXTERNAL_URL=http://192.168.1.2:8096
+```
+
+El primer alta administrativa requiere una acción manual:
+
+1. Ejecutar `docker compose up -d`.
+2. Abrir [http://localhost:5055](http://localhost:5055).
+3. Completar el asistente iniciando sesión con el administrador de Jellyfin.
+4. Ejecutar el paso manual dedicado:
+
+   ```powershell
+   docker compose --profile setup run --rm configure-seerr
+   ```
+
+Este servicio one-shot sólo espera y configura Seerr, Sonarr y Radarr. No
+repite las integraciones de Transmission, Prowlarr, FlareSolverr o Bazarr y es
+seguro volver a ejecutarlo después de cambiar perfiles o URLs. El arranque
+normal conserva además la reconciliación de Seerr dentro de `configure-stack`.
+
+Mientras `initialized=false`, el configurador informa que Seerr queda diferido
+y continúa sin modificarlo. Después del asistente, reconcilia idioma, título,
+Jellyfin y los servicios Sonarr/Radarr. Seerr 3.4.1 devuelve HTTP 404 al intentar
+activar por API bibliotecas que sí lista correctamente; por ahora `Películas` y
+`Programas` deben habilitarse manualmente en la UI. Los
+perfiles pueden fijarse por nombre; si quedan vacíos se usa el primero que
+devuelve cada API:
+
+```dotenv
+SEERR_RADARR_PROFILE=
+SEERR_SONARR_PROFILE=
 ```
 
 ## Endurecimiento operativo
@@ -297,9 +351,9 @@ docker compose logs --tail 200 prowlarr flaresolverr sonarr radarr bazarr transm
 
 ### Backup y restauración
 
-El backup contiene `config/` y `.env`, por lo tanto contiene bases de datos,
-contraseñas y API keys. `backups/` está ignorado por Git; copie cada archivo y
-su `.sha256` a un almacenamiento externo protegido.
+El backup contiene `config/`, el volumen `seerr-config` y `.env`, por lo tanto
+contiene bases de datos, contraseñas y API keys. `backups/` está ignorado por
+Git; copie cada archivo y su `.sha256` a un almacenamiento externo protegido.
 
 ```powershell
 # Crear backup con checksum SHA-256
@@ -362,8 +416,8 @@ docker compose up -d --force-recreate <servicio>
 
 Si la aplicación migró su base de datos de forma incompatible, mantener el
 stack detenido, restaurar el backup correspondiente y volver a iniciar. No se
-debe ejecutar `docker compose down -v`: los datos usan bind mounts, pero ese
-comando establece un precedente peligroso para futuros volúmenes.
+debe ejecutar `docker compose down -v`: borraría el volumen `seerr-config` y su
+base de datos.
 
 ## Incorporación de futuros servicios
 

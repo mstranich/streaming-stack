@@ -181,6 +181,31 @@ services:
       retries: 5
       start_period: 30s
 
+  seerr:
+    <<: *service-hardening
+    image: ${SEERR_IMAGE:-ghcr.io/seerr-team/seerr:v3.4.1}
+    init: true
+    environment:
+      TZ: ${TZ:-America/Argentina/Buenos_Aires}
+      PORT: 5055
+      LOG_LEVEL: ${SEERR_LOG_LEVEL:-info}
+      API_KEY: ${SEERR_API_KEY:?Set SEERR_API_KEY in .env}
+    depends_on:
+      sonarr:
+        condition: service_healthy
+      radarr:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${SEERR_WEB_PORT:-5055}:5055"
+    volumes:
+      - seerr-config:/app/config
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://127.0.0.1:5055/api/v1/settings/public || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
   configure-stack:
     image: ${PYTHON_IMAGE:-python:3.13.15-alpine3.24}
     working_dir: /workspace
@@ -197,6 +222,14 @@ services:
       RADARR_CONFIG: /config/radarr/config.xml
       BAZARR_URL: http://bazarr:6767
       BAZARR_CONFIG: /config/bazarr/config/config.yaml
+      SEERR_URL: http://seerr:5055
+      SEERR_API_KEY: ${SEERR_API_KEY:?Set SEERR_API_KEY in .env}
+      SEERR_UI_LANGUAGE: ${SEERR_UI_LANGUAGE:-es}
+      SEERR_APPLICATION_TITLE: ${SEERR_APPLICATION_TITLE:-Seerr}
+      SEERR_JELLYFIN_INTERNAL_URL: ${SEERR_JELLYFIN_INTERNAL_URL:-http://host.docker.internal:8096}
+      SEERR_JELLYFIN_EXTERNAL_URL: ${SEERR_JELLYFIN_EXTERNAL_URL:-http://192.168.1.2:8096}
+      SEERR_RADARR_PROFILE: ${SEERR_RADARR_PROFILE:-}
+      SEERR_SONARR_PROFILE: ${SEERR_SONARR_PROFILE:-}
       JELLYFIN_HOST: ${JELLYFIN_HOST:-host.docker.internal}
       JELLYFIN_PORT: ${JELLYFIN_PORT:-8096}
       JELLYFIN_API_KEY: ${JELLYFIN_API_KEY:-}
@@ -219,6 +252,8 @@ services:
       radarr:
         condition: service_healthy
       bazarr:
+        condition: service_healthy
+      seerr:
         condition: service_healthy
       transmission:
         condition: service_healthy
@@ -244,6 +279,40 @@ services:
         source: ./config/bazarr
         target: /config/bazarr
         read_only: true
+    restart: "no"
+
+  configure-seerr:
+    image: ${PYTHON_IMAGE:-python:3.13.15-alpine3.24}
+    profiles: ["setup"]
+    working_dir: /workspace
+    command: ["python", "scripts/configure-stack.py", "--only", "seerr"]
+    environment:
+      SEERR_URL: http://seerr:5055
+      SEERR_API_KEY: ${SEERR_API_KEY:?Set SEERR_API_KEY in .env}
+      SEERR_UI_LANGUAGE: ${SEERR_UI_LANGUAGE:-es}
+      SEERR_APPLICATION_TITLE: ${SEERR_APPLICATION_TITLE:-Seerr}
+      SEERR_JELLYFIN_INTERNAL_URL: ${SEERR_JELLYFIN_INTERNAL_URL:-http://host.docker.internal:8096}
+      SEERR_JELLYFIN_EXTERNAL_URL: ${SEERR_JELLYFIN_EXTERNAL_URL:-http://192.168.1.2:8096}
+      SEERR_RADARR_PROFILE: ${SEERR_RADARR_PROFILE:-}
+      SEERR_SONARR_PROFILE: ${SEERR_SONARR_PROFILE:-}
+      JELLYFIN_API_KEY: ${JELLYFIN_API_KEY:-}
+      SONARR_URL: http://sonarr:8989
+      SONARR_CONFIG: /config/sonarr/config.xml
+      RADARR_URL: http://radarr:7878
+      RADARR_CONFIG: /config/radarr/config.xml
+    depends_on:
+      seerr:
+        condition: service_healthy
+      sonarr:
+        condition: service_healthy
+      radarr:
+        condition: service_healthy
+    read_only: true
+    security_opt: ["no-new-privileges:true"]
+    volumes:
+      - ./scripts:/workspace/scripts:ro
+      - ./config/sonarr:/config/sonarr:ro
+      - ./config/radarr:/config/radarr:ro
     restart: "no"
 
   diagnose-stack:
@@ -275,6 +344,7 @@ services:
     volumes:
       - ./scripts:/workspace/scripts:ro
       - ./config:/source/config:ro
+      - seerr-config:/source/seerr-config:ro
       - ./.env:/source/.env:ro
       - ./backups:/backups
     restart: "no"
@@ -293,5 +363,9 @@ services:
       - ./scripts:/workspace/scripts:ro
       - ./backups:/backups:ro
       - ./config:/restore/config
+      - seerr-config:/restore/seerr-config
       - ./.env:/restore/.env
     restart: "no"
+
+volumes:
+  seerr-config:

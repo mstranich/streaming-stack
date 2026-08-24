@@ -24,11 +24,13 @@ def main() -> int:
     manifest = {
         "created_at": datetime.now(timezone.utc).isoformat(),
         "contains_secrets": True,
-        "contents": ["config", ".env"],
+        "contents": ["config", "seerr-config", ".env"],
     }
     manifest_bytes = (json.dumps(manifest, indent=2) + "\n").encode("utf-8")
     with tarfile.open(archive, "w:gz") as bundle:
         bundle.add(SOURCE / "config", arcname="config", recursive=True)
+        if (SOURCE / "seerr-config").is_dir():
+            bundle.add(SOURCE / "seerr-config", arcname="seerr-config", recursive=True)
         bundle.add(SOURCE / ".env", arcname=".env", recursive=False)
         manifest_info = tarfile.TarInfo("backup-manifest.json")
         manifest_info.size = len(manifest_bytes)

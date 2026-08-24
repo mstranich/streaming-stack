@@ -12,7 +12,7 @@ from pathlib import Path, PurePosixPath
 
 BACKUPS = Path("/backups")
 TARGET = Path("/restore")
-ALLOWED_ROOTS = {"config", ".env", "backup-manifest.json"}
+ALLOWED_ROOTS = {"config", "seerr-config", ".env", "backup-manifest.json"}
 
 
 def safe_members(bundle: tarfile.TarFile) -> list[tarfile.TarInfo]:
@@ -59,6 +59,16 @@ def main() -> int:
             else:
                 child.unlink()
         shutil.copytree(extracted / "config", TARGET / "config", dirs_exist_ok=True)
+        if (extracted / "seerr-config").is_dir():
+            seerr_target = TARGET / "seerr-config"
+            for child in seerr_target.iterdir():
+                if child.is_dir():
+                    shutil.rmtree(child)
+                else:
+                    child.unlink()
+            shutil.copytree(
+                extracted / "seerr-config", seerr_target, dirs_exist_ok=True
+            )
         shutil.copy2(extracted / ".env", TARGET / ".env")
 
     print(f"Restored configuration from {requested}")

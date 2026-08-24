@@ -35,6 +35,7 @@ BAZARR_URL = os.getenv("BAZARR_URL", "http://bazarr:6767").rstrip("/")
 BAZARR_CONFIG = Path(
     os.getenv("BAZARR_CONFIG", "/config/bazarr/config/config.yaml")
 )
+SEERR_URL = os.getenv("SEERR_URL", "http://seerr:5055").rstrip("/")
 JELLYFIN_HOST = os.getenv("JELLYFIN_HOST", "host.docker.internal")
 JELLYFIN_PORT = int(os.getenv("JELLYFIN_PORT", "8096"))
 TRANSMISSION_NAME = os.getenv("PROWLARR_TRANSMISSION_NAME", "Transmission")
@@ -130,11 +131,38 @@ def request_json(
             f"Prowlarr API {method} {path} failed with HTTP {error.code}: "
             f"{message[:500]}"
         ) from error
-    except urllib.error.URLError as error:
+    except (urllib.error.URLError, TimeoutError) as error:
+        reason = getattr(error, "reason", str(error))
         raise ConfigurationError(
-            f"Cannot reach Prowlarr at {PROWLARR_URL}: {error.reason}"
+            f"Cannot reach API at {base_url}: {reason}"
         ) from error
 
+    return None if not content else json.loads(content)
+
+
+def seerr_request_json(
+    method: str, path: str, payload: Any | None = None, authenticated: bool = True
+) -> Any:
+    body = None if payload is None else json.dumps(payload).encode("utf-8")
+    headers = {"Accept": "application/json", "Content-Type": "application/json"}
+    if authenticated:
+        headers["X-Api-Key"] = required_env("SEERR_API_KEY")
+    request = urllib.request.Request(
+        f"{SEERR_URL}{path}", data=body, method=method, headers=headers
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            content = response.read()
+    except urllib.error.HTTPError as error:
+        message = error.read().decode("utf-8", errors="replace")
+        raise ConfigurationError(
+            f"Seerr API {method} {path} failed with HTTP {error.code}: "
+            f"{message[:500]}"
+        ) from error
+    except urllib.error.URLError as error:
+        raise ConfigurationError(
+            f"Cannot reach Seerr at {SEERR_URL}: {error.reason}"
+        ) from error
     return None if not content else json.loads(content)
 
 
@@ -568,8 +596,158 @@ def configure_bazarr(sonarr_key: str, radarr_key: str) -> None:
     )
 
 
+def choose_profile(result: dict[str, Any], env_name: str, service: str) -> dict[str, Any]:
+    profiles = result.get("profiles", [])
+    requested = os.getenv(env_name, "").strip()
+    if requested:
+        profile = next(
+            (item for item in profiles if str(item.get("name", "")).casefold() == requested.casefold()),
+            None,
+        )
+        if profile is None:
+            names = ", ".join(str(item.get("name")) for item in profiles)
+            raise ConfigurationError(
+                f"{env_name} '{requested}' was not found in {service}. Available: {names}"
+            )
+        return profile
+    if not profiles:
+        raise ConfigurationError(f"{service} returned no quality profiles")
+    return profiles[0]
+
+
+def configure_seerr_service(
+    kind: str, api_key: str, root_folder: str, profile_env: str
+) -> None:
+    hostname = kind.lower()
+    port = 7878 if kind == "Radarr" else 8989
+    test_payload = {
+        "name": kind,
+        "hostname": hostname,
+        "port": port,
+        "apiKey": api_key,
+        "useSsl": False,
+        "baseUrl": "",
+    }
+    tested = seerr_request_json(
+        "POST", f"/api/v1/settings/{hostname}/test", test_payload
+    )
+    profile = choose_profile(tested, profile_env, kind)
+    folders = tested.get("rootFolders", [])
+    if not any(str(item.get("path", "")).casefold() == root_folder.casefold() for item in folders):
+        raise ConfigurationError(
+            f"Seerr test did not find {kind} root folder {root_folder}"
+        )
+    resource = {
+        **test_payload,
+        "activeProfileId": profile["id"],
+        "activeProfileName": profile["name"],
+        "activeDirectory": root_folder,
+        "is4k": False,
+        "isDefault": True,
+        "externalUrl": f"http://localhost:{port}",
+        "syncEnabled": True,
+        "preventSearch": False,
+    }
+    if kind == "Radarr":
+        resource["minimumAvailability"] = "released"
+    else:
+        resource["enableSeasonFolders"] = True
+    existing_items = seerr_request_json("GET", f"/api/v1/settings/{hostname}")
+    existing = next(
+        (item for item in existing_items if str(item.get("name", "")).casefold() == kind.casefold()),
+        None,
+    )
+    if existing:
+        resource = {**existing, **resource}
+        resource.pop("id", None)
+        seerr_request_json(
+            "PUT", f"/api/v1/settings/{hostname}/{existing['id']}", resource
+        )
+        action = "updated"
+    else:
+        seerr_request_json("POST", f"/api/v1/settings/{hostname}", resource)
+        action = "created"
+    print(f"Seerr {kind} service {action} and tested ({profile['name']}).")
+
+
+def configure_seerr(sonarr_key: str, radarr_key: str) -> None:
+    public = seerr_request_json(
+        "GET", "/api/v1/settings/public", authenticated=False
+    )
+    if not public.get("initialized"):
+        print(
+            "Seerr integration deferred: open http://localhost:5055 and complete "
+            "the one-time Jellyfin administrator login, then rerun configure-stack."
+        )
+        return
+
+    main_settings = seerr_request_json("GET", "/api/v1/settings/main")
+    # The administrative GET includes the API key, but OpenAPI marks it
+    # read-only and rejects it when the settings document is posted back.
+    main_settings.pop("apiKey", None)
+    main_settings["appLanguage"] = os.getenv("SEERR_UI_LANGUAGE", "es")
+    main_settings["applicationTitle"] = os.getenv(
+        "SEERR_APPLICATION_TITLE", "Seerr"
+    )
+    main_settings["localLogin"] = True
+    seerr_request_json("POST", "/api/v1/settings/main", main_settings)
+
+    jellyfin_key = required_env("JELLYFIN_API_KEY")
+    seerr_request_json(
+        "POST",
+        "/api/v1/settings/jellyfin",
+        {
+            "hostname": required_env("SEERR_JELLYFIN_INTERNAL_URL"),
+            "externalHostname": required_env("SEERR_JELLYFIN_EXTERNAL_URL"),
+            "apiKey": jellyfin_key,
+        },
+    )
+    libraries = seerr_request_json("GET", "/api/v1/settings/jellyfin/library")
+    # The setup wizard normally performs the first library discovery. Calling
+    # the sync endpoint again can return HTTP 404 when Jellyfin exposes no new
+    # views, even though Seerr already has valid libraries saved.
+    if not libraries:
+        libraries = seerr_request_json(
+            "POST", "/api/v1/settings/jellyfin/library/sync"
+        )
+    for library in libraries:
+        if str(library.get("type", "")).casefold() in {"movie", "show", "tvshows"}:
+            try:
+                seerr_request_json(
+                    "PUT",
+                    f"/api/v1/settings/jellyfin/library/{library['id']}",
+                    {"enabled": True},
+                )
+            except ConfigurationError as error:
+                # Seerr 3.4.1 can list Jellyfin libraries but return 404 when
+                # enabling the same IDs. Do not let that upstream API defect
+                # prevent Sonarr/Radarr configuration.
+                print(
+                    f"Seerr library '{library.get('name', library['id'])}' "
+                    f"must be enabled manually: {error}"
+                )
+    configure_seerr_service(
+        "Radarr", radarr_key, "/data/media/Movies", "SEERR_RADARR_PROFILE"
+    )
+    configure_seerr_service(
+        "Sonarr", sonarr_key, "/data/media/TV", "SEERR_SONARR_PROFILE"
+    )
+    print("Seerr Jellyfin libraries and general settings reconciled successfully.")
+
+
 def main() -> int:
     try:
+        if sys.argv[1:] == ["--only", "seerr"]:
+            wait_for_application("Sonarr", SONARR_URL)
+            wait_for_application("Radarr", RADARR_URL)
+            sonarr_key = read_api_key(SONARR_CONFIG, "Sonarr")
+            radarr_key = read_api_key(RADARR_CONFIG, "Radarr")
+            configure_seerr(sonarr_key, radarr_key)
+            return 0
+        if sys.argv[1:]:
+            raise ConfigurationError(
+                "Unsupported arguments. Use no arguments or: --only seerr"
+            )
         wait_for_application("Prowlarr", PROWLARR_URL)
         wait_for_application("Sonarr", SONARR_URL)
         wait_for_application("Radarr", RADARR_URL)
@@ -578,6 +756,9 @@ def main() -> int:
         prowlarr_key = read_api_key(PROWLARR_CONFIG, "Prowlarr")
         sonarr_key = read_api_key(SONARR_CONFIG, "Sonarr")
         radarr_key = read_api_key(RADARR_CONFIG, "Radarr")
+        # Configure the request front end first so an unrelated optional
+        # integration failure cannot leave Seerr empty.
+        configure_seerr(sonarr_key, radarr_key)
         configure_prowlarr_transmission(prowlarr_key)
         configure_prowlarr_flaresolverr(prowlarr_key)
         configure_prowlarr_ui(prowlarr_key)

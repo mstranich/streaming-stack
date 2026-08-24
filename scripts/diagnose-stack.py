@@ -18,6 +18,7 @@ SERVICES = {
     "Sonarr": ("sonarr", 8989, "/ping"),
     "Radarr": ("radarr", 7878, "/ping"),
     "Bazarr": ("bazarr", 6767, "/"),
+    "Seerr": ("seerr", 5055, "/api/v1/settings/public"),
 }
 
 
