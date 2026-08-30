@@ -217,6 +217,119 @@ def wait_for_transmission() -> None:
     )
 
 
+def transmission_rpc(method: str, arguments: dict[str, Any] | None = None) -> Any:
+    username = required_env("TRANSMISSION_USER")
+    password = required_env("TRANSMISSION_PASS")
+    credentials = base64.b64encode(
+        f"{username}:{password}".encode("utf-8")
+    ).decode("ascii")
+    headers = {
+        "Authorization": f"Basic {credentials}",
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
+    payload = json.dumps(
+        {"method": method, "arguments": arguments or {}}
+    ).encode("utf-8")
+    url = f"{TRANSMISSION_URL}/transmission/rpc"
+    for _ in range(2):
+        request = urllib.request.Request(url, data=payload, method="POST", headers=headers)
+        try:
+            with urllib.request.urlopen(request, timeout=15) as response:
+                result = json.loads(response.read())
+        except urllib.error.HTTPError as error:
+            if error.code == 409:
+                session_id = error.headers.get("X-Transmission-Session-Id")
+                if session_id:
+                    headers["X-Transmission-Session-Id"] = session_id
+                    continue
+            message = error.read().decode("utf-8", errors="replace")
+            raise ConfigurationError(
+                f"Transmission RPC {method} failed with HTTP {error.code}: "
+                f"{message[:500]}"
+            ) from error
+        except (urllib.error.URLError, TimeoutError) as error:
+            raise ConfigurationError(
+                f"Cannot reach Transmission RPC at {url}: {error}"
+            ) from error
+        if result.get("result") != "success":
+            raise ConfigurationError(
+                f"Transmission RPC {method} failed: {result.get('result')}"
+            )
+        return result.get("arguments", {})
+    raise ConfigurationError("Transmission RPC did not accept its session id")
+
+
+def parse_minutes(value: str, variable: str) -> int:
+    try:
+        hour_text, minute_text = value.split(":", 1)
+        hour, minute = int(hour_text), int(minute_text)
+    except (ValueError, AttributeError) as error:
+        raise ConfigurationError(f"{variable} must use HH:MM") from error
+    if not 0 <= hour <= 23 or not 0 <= minute <= 59:
+        raise ConfigurationError(f"{variable} must be a valid 24-hour time")
+    return hour * 60 + minute
+
+
+def configure_transmission_policy() -> None:
+    session = transmission_rpc("session-get")
+    seed_ratio = float(os.getenv("TRANSMISSION_SEED_RATIO", "2"))
+    if seed_ratio <= 0:
+        raise ConfigurationError("TRANSMISSION_SEED_RATIO must be greater than zero")
+
+    day_bits = {"sun": 1, "mon": 2, "tue": 4, "wed": 8, "thu": 16, "fri": 32, "sat": 64}
+    selected_days = [
+        item.strip().casefold()
+        for item in os.getenv("TRANSMISSION_WORK_DAYS", "mon,tue,wed,thu,fri").split(",")
+        if item.strip()
+    ]
+    unknown_days = [item for item in selected_days if item not in day_bits]
+    if not selected_days or unknown_days:
+        raise ConfigurationError(
+            "TRANSMISSION_WORK_DAYS contains invalid values: " + ", ".join(unknown_days)
+        )
+    day_mask = sum(day_bits[item] for item in set(selected_days))
+    enabled = os.getenv("TRANSMISSION_WORK_SCHEDULE_ENABLED", "true").casefold() in {
+        "1", "true", "yes", "on"
+    }
+    down = int(os.getenv("TRANSMISSION_WORK_DOWN_KBPS", "512"))
+    up = int(os.getenv("TRANSMISSION_WORK_UP_KBPS", "128"))
+    if down <= 0 or up <= 0:
+        raise ConfigurationError("Transmission work-hour limits must be greater than zero")
+
+    def key(snake: str, camel: str) -> str:
+        return snake if snake in session else camel
+
+    settings = {
+        key("seed_ratio_limit", "seedRatioLimit"): seed_ratio,
+        key("seed_ratio_limited", "seedRatioLimited"): True,
+        key("alt_speed_time_enabled", "alt-speed-time-enabled"): enabled,
+        key("alt_speed_time_day", "alt-speed-time-day"): day_mask,
+        key("alt_speed_time_begin", "alt-speed-time-begin"): parse_minutes(
+            os.getenv("TRANSMISSION_WORK_START", "09:00"), "TRANSMISSION_WORK_START"
+        ),
+        key("alt_speed_time_end", "alt-speed-time-end"): parse_minutes(
+            os.getenv("TRANSMISSION_WORK_END", "18:00"), "TRANSMISSION_WORK_END"
+        ),
+        key("alt_speed_down", "alt-speed-down"): down,
+        key("alt_speed_up", "alt-speed-up"): up,
+    }
+    transmission_rpc("session-set", settings)
+    verified = transmission_rpc("session-get")
+    for setting, expected in settings.items():
+        if verified.get(setting) != expected:
+            raise ConfigurationError(
+                f"Transmission did not persist {setting}: expected {expected}, "
+                f"got {verified.get(setting)}"
+            )
+    print(
+        "Transmission policy reconciled: ratio "
+        f"{seed_ratio:g}; work schedule {','.join(selected_days)} "
+        f"{os.getenv('TRANSMISSION_WORK_START', '09:00')}-"
+        f"{os.getenv('TRANSMISSION_WORK_END', '18:00')} at {down}/{up} kB/s."
+    )
+
+
 def set_field(resource: dict[str, Any], name: str, value: Any) -> None:
     for field in resource.get("fields", []):
         if str(field.get("name", "")).casefold() == name.casefold():
@@ -756,6 +869,7 @@ def main() -> int:
         prowlarr_key = read_api_key(PROWLARR_CONFIG, "Prowlarr")
         sonarr_key = read_api_key(SONARR_CONFIG, "Sonarr")
         radarr_key = read_api_key(RADARR_CONFIG, "Radarr")
+        configure_transmission_policy()
         # Configure the request front end first so an unrelated optional
         # integration failure cannot leave Seerr empty.
         configure_seerr(sonarr_key, radarr_key)

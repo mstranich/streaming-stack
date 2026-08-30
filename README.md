@@ -105,6 +105,25 @@ uso humano. No es necesario instalar Transmission para Windows.
 5. En las preferencias de Transmission, establecer el directorio de descarga
    en `/data/torrents`. Los servicios *arr verán exactamente la misma ruta.
 
+`configure-stack` fija un ratio global de `2` y usa el planificador nativo de
+velocidad alternativa para reducir el tráfico de lunes a viernes entre 09:00 y
+18:00. Fuera de ese intervalo no modifica los límites normales elegidos por el
+usuario desde la Web UI:
+
+```dotenv
+TRANSMISSION_SEED_RATIO=2
+TRANSMISSION_WORK_SCHEDULE_ENABLED=true
+TRANSMISSION_WORK_DAYS=mon,tue,wed,thu,fri
+TRANSMISSION_WORK_START=09:00
+TRANSMISSION_WORK_END=18:00
+TRANSMISSION_WORK_DOWN_KBPS=512
+TRANSMISSION_WORK_UP_KBPS=128
+```
+
+Al alcanzar el ratio, Transmission detiene el torrent y Sonarr/Radarr pueden
+eliminar la descarga completada porque ambos tienen habilitado Completed
+Download Handling → Remove. La biblioteca persiste mediante su hardlink NTFS.
+
 La Web UI está enlazada a `127.0.0.1` y sólo es accesible desde este equipo. Los
 puertos peer TCP/UDP `51413` se publican en todas las interfaces para recibir
 conexiones BitTorrent. Ambos puertos pueden cambiarse en `.env`.
