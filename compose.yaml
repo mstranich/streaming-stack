@@ -65,6 +65,27 @@ services:
       retries: 5
       start_period: 30s
 
+  init-jackett:
+    image: ${PYTHON_IMAGE:-python:3.13.15-alpine3.24}
+    environment:
+      JACKETT_FLARESOLVERR_URL: http://flaresolverr:8191
+      JACKETT_FLARESOLVERR_MAX_TIMEOUT: ${JACKETT_FLARESOLVERR_MAX_TIMEOUT:-60000}
+    working_dir: /workspace
+    command: ["python", "scripts/init-jackett-config.py"]
+    restart: "no"
+    network_mode: none
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - type: bind
+        source: ./scripts
+        target: /workspace/scripts
+        read_only: true
+      - type: bind
+        source: ./config/jackett
+        target: /config/jackett
+
   prowlarr:
     <<: *service-hardening
     image: ${PROWLARR_IMAGE:-lscr.io/linuxserver/prowlarr:version-2.5.2.5491}
@@ -88,6 +109,33 @@ services:
       timeout: 10s
       retries: 5
       start_period: 30s
+
+  jackett:
+    <<: *service-hardening
+    image: ${JACKETT_IMAGE:-lscr.io/linuxserver/jackett:version-v0.24.2489}
+    environment:
+      PUID: ${PUID:-1000}
+      PGID: ${PGID:-1000}
+      UMASK: ${UMASK:-002}
+      TZ: ${TZ:-America/Argentina/Buenos_Aires}
+      AUTO_UPDATE: "false"
+    depends_on:
+      init-jackett:
+        condition: service_completed_successfully
+      flaresolverr:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${JACKETT_WEB_PORT:-9117}:9117"
+    volumes:
+      - type: bind
+        source: ./config/jackett
+        target: /config
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:9117/UI/Dashboard >/dev/null"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 45s
 
   flaresolverr:
     <<: *service-hardening
@@ -213,6 +261,12 @@ services:
     environment:
       PROWLARR_URL: http://prowlarr:9696
       PROWLARR_CONFIG: /config/prowlarr/config.xml
+      JACKETT_URL: http://jackett:9117
+      JACKETT_CONFIG: /config/jackett/Jackett/ServerConfig.json
+      JACKETT_SYNC_INDEXERS: ${JACKETT_SYNC_INDEXERS:-}
+      JACKETT_PROWLARR_TAG: ${JACKETT_PROWLARR_TAG:-jackett}
+      JACKETT_PROWLARR_APP_PROFILE: ${JACKETT_PROWLARR_APP_PROFILE:-}
+      JACKETT_INDEXER_TEST_TIMEOUT: ${JACKETT_INDEXER_TEST_TIMEOUT:-120}
       FLARESOLVERR_URL: http://flaresolverr:8191
       FLARESOLVERR_TAG: ${FLARESOLVERR_TAG:-flaresolver}
       FLARESOLVERR_REQUEST_TIMEOUT: ${FLARESOLVERR_REQUEST_TIMEOUT:-60}
@@ -252,6 +306,8 @@ services:
     depends_on:
       prowlarr:
         condition: service_healthy
+      jackett:
+        condition: service_healthy
       flaresolverr:
         condition: service_healthy
       sonarr:
@@ -273,6 +329,10 @@ services:
       - type: bind
         source: ./config/prowlarr
         target: /config/prowlarr
+        read_only: true
+      - type: bind
+        source: ./config/jackett
+        target: /config/jackett
         read_only: true
       - type: bind
         source: ./config/sonarr
@@ -320,6 +380,33 @@ services:
       - ./scripts:/workspace/scripts:ro
       - ./config/sonarr:/config/sonarr:ro
       - ./config/radarr:/config/radarr:ro
+    restart: "no"
+
+  configure-jackett:
+    image: ${PYTHON_IMAGE:-python:3.13.15-alpine3.24}
+    profiles: ["setup"]
+    working_dir: /workspace
+    command: ["python", "scripts/configure-stack.py", "--only", "jackett"]
+    environment:
+      PROWLARR_URL: http://prowlarr:9696
+      PROWLARR_CONFIG: /config/prowlarr/config.xml
+      JACKETT_URL: http://jackett:9117
+      JACKETT_CONFIG: /config/jackett/Jackett/ServerConfig.json
+      JACKETT_SYNC_INDEXERS: ${JACKETT_SYNC_INDEXERS:-}
+      JACKETT_PROWLARR_TAG: ${JACKETT_PROWLARR_TAG:-jackett}
+      JACKETT_PROWLARR_APP_PROFILE: ${JACKETT_PROWLARR_APP_PROFILE:-}
+      JACKETT_INDEXER_TEST_TIMEOUT: ${JACKETT_INDEXER_TEST_TIMEOUT:-120}
+    depends_on:
+      prowlarr:
+        condition: service_healthy
+      jackett:
+        condition: service_healthy
+    read_only: true
+    security_opt: ["no-new-privileges:true"]
+    volumes:
+      - ./scripts:/workspace/scripts:ro
+      - ./config/prowlarr:/config/prowlarr:ro
+      - ./config/jackett:/config/jackett:ro
     restart: "no"
 
   diagnose-stack:

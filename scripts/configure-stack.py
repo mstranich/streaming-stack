@@ -21,6 +21,11 @@ PROWLARR_URL = os.getenv("PROWLARR_URL", "http://prowlarr:9696").rstrip("/")
 PROWLARR_CONFIG = Path(
     os.getenv("PROWLARR_CONFIG", "/config/prowlarr/config.xml")
 )
+JACKETT_URL = os.getenv("JACKETT_URL", "http://jackett:9117").rstrip("/")
+JACKETT_CONFIG = Path(
+    os.getenv("JACKETT_CONFIG", "/config/jackett/Jackett/ServerConfig.json")
+)
+JACKETT_PROWLARR_TAG = os.getenv("JACKETT_PROWLARR_TAG", "jackett").strip()
 FLARESOLVERR_URL = os.getenv(
     "FLARESOLVERR_URL", "http://flaresolverr:8191"
 ).rstrip("/")
@@ -82,6 +87,19 @@ def read_api_key(config_path: Path, application: str) -> str:
     return api_key
 
 
+def read_jackett_api_key() -> str:
+    try:
+        config = json.loads(JACKETT_CONFIG.read_text(encoding="utf-8-sig"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise ConfigurationError(
+            f"Cannot read Jackett config at {JACKETT_CONFIG}: {error}"
+        ) from error
+    api_key = str(config.get("APIKey", "")).strip()
+    if not api_key:
+        raise ConfigurationError("Jackett config does not contain an API key")
+    return api_key
+
+
 def read_bazarr_api_key() -> str:
     try:
         content = BAZARR_CONFIG.read_text(encoding="utf-8")
@@ -104,6 +122,7 @@ def request_json(
     api_key: str,
     payload: Any | None = None,
     base_url: str = PROWLARR_URL,
+    timeout: int = 15,
 ) -> Any:
     body = None if payload is None else json.dumps(payload).encode("utf-8")
     request = urllib.request.Request(
@@ -118,7 +137,7 @@ def request_json(
     )
 
     try:
-        with urllib.request.urlopen(request, timeout=15) as response:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
             content = response.read()
     except urllib.error.HTTPError as error:
         if error.code == 401:
@@ -181,6 +200,27 @@ def wait_for_application(name: str, base_url: str) -> None:
 
     raise ConfigurationError(
         f"{name} did not become ready within {WAIT_SECONDS}s: {last_error}"
+    )
+
+
+def wait_for_jackett() -> None:
+    api_key = read_jackett_api_key()
+    query = urllib.parse.urlencode({"apikey": api_key, "t": "caps"})
+    health_url = (
+        f"{JACKETT_URL}/api/v2.0/indexers/all/results/torznab/api?{query}"
+    )
+    deadline = time.monotonic() + WAIT_SECONDS
+    last_error: Exception | None = None
+    while time.monotonic() < deadline:
+        try:
+            with urllib.request.urlopen(health_url, timeout=5) as response:
+                if response.status == 200:
+                    return
+        except (urllib.error.URLError, TimeoutError) as error:
+            last_error = error
+        time.sleep(2)
+    raise ConfigurationError(
+        f"Jackett did not become ready within {WAIT_SECONDS}s: {last_error}"
     )
 
 
@@ -466,6 +506,184 @@ def configure_prowlarr_flaresolverr(api_key: str) -> None:
         f"Prowlarr indexer proxy '{FLARESOLVERR_NAME}' {action}d and tested "
         f"successfully with tag '{FLARESOLVERR_TAG}'."
     )
+
+
+def get_or_create_prowlarr_tag(api_key: str, label: str) -> int:
+    if not label:
+        raise ConfigurationError("JACKETT_PROWLARR_TAG cannot be empty")
+    tags = request_json("GET", "/api/v1/tag", api_key)
+    tag = next(
+        (item for item in tags if str(item.get("label", "")).casefold() == label.casefold()),
+        None,
+    )
+    if tag is None:
+        tag = request_json("POST", "/api/v1/tag", api_key, {"label": label})
+    tag_id = tag.get("id")
+    if not tag_id:
+        raise ConfigurationError(f"Prowlarr tag '{label}' has no id")
+    return int(tag_id)
+
+
+def configured_jackett_indexers(api_key: str) -> list[dict[str, str]]:
+    query = urllib.parse.urlencode(
+        {"apikey": api_key, "t": "indexers", "configured": "true"}
+    )
+    url = f"{JACKETT_URL}/api/v2.0/indexers/all/results/torznab/api?{query}"
+    try:
+        with urllib.request.urlopen(url, timeout=30) as response:
+            root = ET.fromstring(response.read())
+    except (urllib.error.URLError, TimeoutError, ET.ParseError) as error:
+        raise ConfigurationError(f"Cannot discover Jackett indexers: {error}") from error
+
+    discovered: list[dict[str, str]] = []
+    for element in root.findall(".//indexer"):
+        indexer_id = str(element.get("id", "")).strip()
+        name = str(element.get("name", indexer_id)).strip()
+        if indexer_id:
+            discovered.append({"id": indexer_id, "name": name or indexer_id})
+
+    requested = {
+        item.strip().casefold()
+        for item in os.getenv("JACKETT_SYNC_INDEXERS", "").split(",")
+        if item.strip()
+    }
+    if requested:
+        found = {item["id"].casefold() for item in discovered}
+        missing = sorted(requested - found)
+        if missing:
+            raise ConfigurationError(
+                "JACKETT_SYNC_INDEXERS contains IDs that are not configured in Jackett: "
+                + ", ".join(missing)
+            )
+        discovered = [
+            item for item in discovered if item["id"].casefold() in requested
+        ]
+    return discovered
+
+
+def configure_prowlarr_jackett(api_key: str, jackett_key: str) -> None:
+    """Expose selected Jackett trackers as individual Generic Torznab feeds."""
+    desired = configured_jackett_indexers(jackett_key)
+    tag_id = get_or_create_prowlarr_tag(api_key, JACKETT_PROWLARR_TAG)
+    app_profiles = request_json("GET", "/api/v1/appprofile", api_key)
+    requested_profile = os.getenv("JACKETT_PROWLARR_APP_PROFILE", "").strip()
+    if requested_profile:
+        app_profile = next(
+            (
+                item
+                for item in app_profiles
+                if str(item.get("name", "")).casefold()
+                == requested_profile.casefold()
+            ),
+            None,
+        )
+        if app_profile is None:
+            available = ", ".join(str(item.get("name")) for item in app_profiles)
+            raise ConfigurationError(
+                f"JACKETT_PROWLARR_APP_PROFILE '{requested_profile}' was not found. "
+                f"Available profiles: {available}"
+            )
+    else:
+        app_profile = next(
+            (item for item in app_profiles if int(item.get("id", 0)) > 0), None
+        )
+    if app_profile is None:
+        raise ConfigurationError("Prowlarr returned no usable App Profiles")
+    app_profile_id = int(app_profile["id"])
+    test_timeout = int(os.getenv("JACKETT_INDEXER_TEST_TIMEOUT", "120"))
+    if test_timeout < 15:
+        raise ConfigurationError("JACKETT_INDEXER_TEST_TIMEOUT must be at least 15")
+    existing_indexers = request_json("GET", "/api/v1/indexer", api_key)
+    managed = {
+        str(item.get("name", ""))[len("Jackett / "):].casefold(): item
+        for item in existing_indexers
+        if str(item.get("name", "")).startswith("Jackett / ")
+        and tag_id in item.get("tags", [])
+    }
+    native_names = {
+        str(item.get("name", "")).casefold()
+        for item in existing_indexers
+        if item not in managed.values()
+    }
+
+    schemas = request_json(
+        "GET", "/api/v1/indexer/schema", api_key, timeout=test_timeout
+    )
+    generic_schema = next(
+        (item for item in schemas if str(item.get("name", "")) == "Generic Torznab"),
+        None,
+    )
+    if generic_schema is None:
+        raise ConfigurationError("Prowlarr did not return the Generic Torznab schema")
+
+    desired_ids: set[str] = set()
+    failed: list[str] = []
+    for item in desired:
+        indexer_id = item["id"]
+        desired_ids.add(indexer_id.casefold())
+        if item["name"].casefold() in native_names:
+            current = managed.get(indexer_id.casefold())
+            if current is not None:
+                request_json("DELETE", f"/api/v1/indexer/{current['id']}", api_key)
+            print(
+                f"Jackett indexer '{item['name']}' skipped: an indexer with the "
+                "same name already exists natively in Prowlarr."
+            )
+            continue
+        current = managed.get(indexer_id.casefold())
+        resource = deepcopy(current or generic_schema)
+        resource["name"] = f"Jackett / {indexer_id}"
+        resource["enable"] = True
+        resource["appProfileId"] = app_profile_id
+        resource.setdefault("priority", 25)
+        resource["tags"] = sorted(set(resource.get("tags", [])) | {tag_id})
+        set_field(
+            resource,
+            "baseUrl",
+            f"{JACKETT_URL}/api/v2.0/indexers/{urllib.parse.quote(indexer_id, safe='')}/results/torznab",
+        )
+        set_field(resource, "apiPath", "/api")
+        set_field(resource, "apiKey", jackett_key)
+        try:
+            request_json(
+                "POST",
+                "/api/v1/indexer/test",
+                api_key,
+                resource,
+                timeout=test_timeout,
+            )
+        except ConfigurationError as error:
+            failed.append(indexer_id)
+            print(
+                f"Jackett indexer '{indexer_id}' skipped after a failed Prowlarr "
+                f"test: {error}"
+            )
+            continue
+        if current is None:
+            request_json("POST", "/api/v1/indexer", api_key, resource)
+            action = "created"
+        else:
+            request_json(
+                "PUT", f"/api/v1/indexer/{resource['id']}", api_key, resource
+            )
+            action = "updated"
+        print(f"Prowlarr indexer 'Jackett / {indexer_id}' {action} and tested.")
+
+    for indexer_id, stale in managed.items():
+        if indexer_id not in desired_ids:
+            request_json("DELETE", f"/api/v1/indexer/{stale['id']}", api_key)
+            print(f"Removed stale Prowlarr indexer '{stale['name']}'.")
+
+    if not desired:
+        print(
+            "Jackett has no configured indexers yet; add them at "
+            "http://localhost:9117 and rerun configure-stack."
+        )
+    elif failed:
+        print(
+            "Jackett reconciliation completed with skipped failing indexers: "
+            + ", ".join(failed)
+        )
 
 
 def configure_prowlarr_authentication(api_key: str) -> None:
@@ -850,6 +1068,12 @@ def configure_seerr(sonarr_key: str, radarr_key: str) -> None:
 
 def main() -> int:
     try:
+        if sys.argv[1:] == ["--only", "jackett"]:
+            wait_for_application("Prowlarr", PROWLARR_URL)
+            wait_for_jackett()
+            prowlarr_key = read_api_key(PROWLARR_CONFIG, "Prowlarr")
+            configure_prowlarr_jackett(prowlarr_key, read_jackett_api_key())
+            return 0
         if sys.argv[1:] == ["--only", "seerr"]:
             wait_for_application("Sonarr", SONARR_URL)
             wait_for_application("Radarr", RADARR_URL)
@@ -859,14 +1083,17 @@ def main() -> int:
             return 0
         if sys.argv[1:]:
             raise ConfigurationError(
-                "Unsupported arguments. Use no arguments or: --only seerr"
+                "Unsupported arguments. Use no arguments, --only jackett, "
+                "or --only seerr"
             )
         wait_for_application("Prowlarr", PROWLARR_URL)
+        wait_for_jackett()
         wait_for_application("Sonarr", SONARR_URL)
         wait_for_application("Radarr", RADARR_URL)
         wait_for_application("Bazarr", BAZARR_URL)
         wait_for_transmission()
         prowlarr_key = read_api_key(PROWLARR_CONFIG, "Prowlarr")
+        jackett_key = read_jackett_api_key()
         sonarr_key = read_api_key(SONARR_CONFIG, "Sonarr")
         radarr_key = read_api_key(RADARR_CONFIG, "Radarr")
         configure_transmission_policy()
@@ -875,6 +1102,7 @@ def main() -> int:
         configure_seerr(sonarr_key, radarr_key)
         configure_prowlarr_transmission(prowlarr_key)
         configure_prowlarr_flaresolverr(prowlarr_key)
+        configure_prowlarr_jackett(prowlarr_key, jackett_key)
         configure_prowlarr_ui(prowlarr_key)
         configure_prowlarr_authentication(prowlarr_key)
         configure_arr_web("Sonarr", SONARR_URL, sonarr_key)

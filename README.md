@@ -190,8 +190,8 @@ Para volver a ejecutar únicamente el upsert:
 docker compose run --rm configure-stack
 ```
 
-El script espera a Prowlarr y Transmission, lee la API key directamente desde
-`/config`, toma ambos juegos de credenciales desde `.env`, prueba la conexión,
+El script espera a Prowlarr, Jackett y Transmission, lee sus API keys
+directamente desde `/config`, toma las credenciales desde `.env`, prueba la conexión,
 crea o actualiza el Download Client y configura el acceso Web de Prowlarr
 mediante la API oficial. También valida y configura el idioma indicado por
 `SERVARR_UI_LANGUAGE`. No imprime secretos ni los guarda en el repositorio y
@@ -219,13 +219,49 @@ FLARESOLVERR_TAG=flaresolver
 FLARESOLVERR_REQUEST_TIMEOUT=60
 ```
 
+### Jackett complementario
+
+Jackett complementa los indexers nativos de Prowlarr y publica su Web UI sólo
+en [http://localhost:9117](http://localhost:9117). Su configuración persiste en
+`./config/jackett`. El servicio one-shot `init-jackett` crea o actualiza de
+forma segura `ServerConfig.json` antes del arranque, conserva la API key
+existente y conecta Jackett con `http://flaresolverr:8191`.
+
+Los trackers se agregan manualmente desde Jackett porque cada sitio puede pedir
+credenciales, cookies o CAPTCHA. Después se ejecuta:
+
+```powershell
+docker compose --profile setup run --rm configure-jackett
+```
+
+El configurador descubre los trackers habilitados, crea un **Generic Torznab**
+individual por tracker en Prowlarr, prueba cada feed y le asigna el tag
+`jackett`. Si Prowlarr ya contiene un indexer con el mismo nombre, conserva el
+nativo y omite el duplicado. Los recursos administrados que ya no estén en la
+selección se eliminan de Prowlarr. Un tracker que falle o agote su timeout se
+informa y se omite sin impedir que se reconcilien los demás.
+
+Por defecto se sincronizan todos los trackers configurados. Para restringirlos,
+se indican sus IDs internos separados por comas:
+
+```dotenv
+JACKETT_WEB_PORT=9117
+JACKETT_SYNC_INDEXERS=tracker-a,tracker-b
+JACKETT_PROWLARR_TAG=jackett
+# Vacío selecciona el primer App Profile de Prowlarr (normalmente Standard).
+JACKETT_PROWLARR_APP_PROFILE=
+JACKETT_INDEXER_TEST_TIMEOUT=120
+JACKETT_FLARESOLVERR_MAX_TIMEOUT=60000
+```
+
+No se usa el feed agregado `all`: mantener feeds individuales conserva las
+capacidades y categorías de cada tracker y evita que uno lento degrade al resto.
+
 Los scripts Python concentran la automatización del proyecto:
 
 - `scripts/init-data-dirs.py`: prepara filesystem, propietario y permisos.
+- `scripts/init-jackett-config.py`: inicializa Jackett y su conexión a FlareSolverr.
 - `scripts/configure-stack.py`: configura APIs después del arranque.
-
-Cuando se incorporen Sonarr y Radarr, `configure-stack.py` recibirá sus
-funciones para poder configurar las tres aplicaciones con el mismo comando.
 
 ## Sonarr, Radarr, Bazarr y Seerr
 
@@ -392,7 +428,7 @@ libre y Jellyfin externo. No imprime contraseñas ni API keys. Para investigar:
 
 ```powershell
 docker compose ps
-docker compose logs --tail 200 prowlarr flaresolverr sonarr radarr bazarr transmission
+docker compose logs --tail 200 prowlarr jackett flaresolverr sonarr radarr bazarr transmission
 ```
 
 ### Backup y restauración
