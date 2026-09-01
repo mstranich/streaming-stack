@@ -525,7 +525,3 @@ depends_on:
 
 La comunicación de APIs entre esos servicios se realizará sobre la red privada
 de Compose utilizando nombres DNS internos, no `localhost`.
-
-## Documentación del proyecto
-
-- [`VALIDATION.md`](VALIDATION.md): pruebas realizadas sobre Rancher Desktop.
