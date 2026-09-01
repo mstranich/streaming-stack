@@ -1,0 +1,57 @@
+@startuml servarr-architecture
+!theme plain
+left to right direction
+skinparam componentStyle rectangle
+skinparam shadowing false
+skinparam packageStyle rectangle
+
+actor "Usuario LAN" as user
+component "Moonfin\n(cliente externo, opcional)" as moonfin
+component "Bot de Telegram\n(opcional)" as telegram_bot
+cloud "Jellyfin (Windows, externo)\nMoonbase plugin" as jellyfin
+database "data\n(host Windows)\ntorrents · media" as data
+
+rectangle "Rancher Desktop / Moby" {
+  component "Seerr\n:5055" as seerr
+  component "Prowlarr\n:9696" as prowlarr
+  component "Jackett\n:9117" as jackett
+  component "FlareSolverr\n:8191" as flare
+  component "Sonarr\n:8989" as sonarr
+  component "Radarr\n:7878" as radarr
+  component "Bazarr\n:6767" as bazarr
+  component "Transmission\n:9091" as transmission
+  component "init-data\n(one-shot)" as init
+  component "configure-stack\n(one-shot)" as config
+}
+
+user -> moonfin : cliente multimedia
+user -> jellyfin : reproducción web
+user -> seerr : solicitudes web
+user <- telegram_bot : mensajes
+telegram_bot <- seerr : notificaciones
+moonfin --> jellyfin : reproducción / autenticación
+jellyfin -> seerr : proxy de Seerr (Moonbase)
+seerr --> sonarr : API
+seerr --> radarr : API
+sonarr --> prowlarr : indexadores
+radarr --> prowlarr : indexadores
+sonarr --> transmission : descargas
+radarr --> transmission : descargas
+prowlarr --> transmission : cliente configurado
+prowlarr --> jackett : feeds Torznab
+prowlarr -> flare : proxy indexadores
+transmission --> data : torrents
+sonarr -> data : TV
+radarr -> data : Movies
+bazarr --> sonarr : catálogo TV / monitorización
+bazarr --> radarr : catálogo Movies / monitorización
+bazarr --> data : descarga subtítulos
+jellyfin <-- bazarr : refresca metadatos
+jellyfin --> data : bibliotecas media
+config ..> seerr : configura
+config .> prowlarr : configura
+config .> jackett : sincroniza
+config .> transmission : política
+init ..> data : crea estructura
+
+@enduml

@@ -3,6 +3,17 @@
 Stack multimedia en construcción para Windows con Rancher Desktop. Los
 servicios se incorporarán y validarán de forma incremental.
 
+## Arquitectura
+
+El diagrama refleja únicamente los servicios declarados en Docker Compose. Jellyfin
+se muestra como una instalación externa en Windows, consumida por Bazarr mediante
+su API.
+
+![Arquitectura del stack](docs/servarr-architecture.png)
+
+La fuente está en [`docs/architecture.puml`](docs/architecture.puml). Para
+regenerar la imagen: `plantuml -tpng docs/architecture.puml`.
+
 > Estado: alcance funcional inicial completado. Las imágenes están fijadas a
 > versiones legibles validadas y la operación se realiza con controles de salud,
 > diagnóstico y backup documentados.
