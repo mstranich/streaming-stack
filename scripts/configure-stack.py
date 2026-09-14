@@ -73,6 +73,20 @@ def required_env(name: str) -> str:
     return value
 
 
+def optional_bool_env(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None or not value.strip():
+        return default
+    normalized = value.strip().casefold()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    raise ConfigurationError(
+        f"{name} must be true/false, yes/no, on/off, or 1/0"
+    )
+
+
 def read_api_key(config_path: Path, application: str) -> str:
     try:
         root = ET.parse(config_path).getroot()
@@ -1085,6 +1099,7 @@ def configure_seerr(sonarr_key: str, radarr_key: str) -> None:
         "Seerr Jellyfin libraries enabled: "
         + ", ".join(str(library.get("name", library["id"])) for library in selected)
     )
+    configure_seerr_telegram()
     configure_seerr_service(
         "Radarr", radarr_key, "/data/media/Movies", "SEERR_RADARR_PROFILE"
     )
@@ -1092,6 +1107,53 @@ def configure_seerr(sonarr_key: str, radarr_key: str) -> None:
         "Sonarr", sonarr_key, "/data/media/TV", "SEERR_SONARR_PROFILE"
     )
     print("Seerr Jellyfin libraries and general settings reconciled successfully.")
+
+
+def configure_seerr_telegram() -> None:
+    token = os.getenv("SEERR_TELEGRAM_BOT_TOKEN", "").strip()
+    chat_id = os.getenv("SEERR_TELEGRAM_CHAT_ID", "").strip()
+    if not token and not chat_id:
+        print("Seerr Telegram notifications skipped: credentials are empty.")
+        return
+    if not token or not chat_id:
+        raise ConfigurationError(
+            "SEERR_TELEGRAM_BOT_TOKEN and SEERR_TELEGRAM_CHAT_ID must both be set"
+        )
+
+    try:
+        notification_types = int(os.getenv("SEERR_TELEGRAM_TYPES", "0"))
+    except ValueError as error:
+        raise ConfigurationError("SEERR_TELEGRAM_TYPES must be an integer") from error
+
+    telegram = seerr_request_json(
+        "GET", "/api/v1/settings/notifications/telegram"
+    )
+    telegram["enabled"] = True
+    telegram["types"] = notification_types
+    telegram["embedPoster"] = optional_bool_env(
+        "SEERR_TELEGRAM_EMBED_POSTER", True
+    )
+    options = telegram.setdefault("options", {})
+    options["botAPI"] = token
+    options["chatId"] = chat_id
+    options["messageThreadId"] = os.getenv(
+        "SEERR_TELEGRAM_MESSAGE_THREAD_ID", ""
+    ).strip()
+    options["sendSilently"] = optional_bool_env(
+        "SEERR_TELEGRAM_SEND_SILENTLY", False
+    )
+
+    # Test before persisting so an invalid token, inaccessible group, or wrong
+    # chat ID cannot replace a previously working notification configuration.
+    seerr_request_json(
+        "POST", "/api/v1/settings/notifications/telegram/test", telegram
+    )
+    saved = seerr_request_json(
+        "POST", "/api/v1/settings/notifications/telegram", telegram
+    )
+    if not saved.get("enabled") or saved.get("options", {}).get("chatId") != chat_id:
+        raise ConfigurationError("Seerr did not persist the Telegram configuration")
+    print("Seerr Telegram notifications configured and tested successfully.")
 
 
 def main() -> int:

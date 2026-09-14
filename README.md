@@ -396,6 +396,27 @@ SEERR_RADARR_PROFILE=
 SEERR_SONARR_PROFILE=
 ```
 
+#### Notificaciones opcionales por Telegram
+
+Seerr puede configurar y probar su agente nativo de Telegram durante el mismo
+paso `configure-seerr`. El bot debe pertenecer al grupo y tener permiso para
+enviar mensajes. Guardar el token únicamente en el archivo `.env` ignorado por
+Git:
+
+```dotenv
+SEERR_TELEGRAM_BOT_TOKEN=
+SEERR_TELEGRAM_CHAT_ID=
+SEERR_TELEGRAM_TYPES=0
+SEERR_TELEGRAM_MESSAGE_THREAD_ID=
+SEERR_TELEGRAM_SEND_SILENTLY=false
+SEERR_TELEGRAM_EMBED_POSTER=true
+```
+
+`SEERR_TELEGRAM_TYPES=0` habilita todos los eventos admitidos por Seerr. El ID
+de tema sólo se completa para grupos configurados como foro. El configurador
+primero envía una notificación de prueba y sólo persiste el cambio si Telegram
+la acepta.
+
 ## Endurecimiento operativo
 
 Los servicios permanentes usan `restart: unless-stopped`,
