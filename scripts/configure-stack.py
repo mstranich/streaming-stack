@@ -907,6 +907,7 @@ def configure_bazarr(sonarr_key: str, radarr_key: str) -> None:
             f"Bazarr settings failed with HTTP {error.code}: {message[:500]}"
         ) from error
     print("Bazarr connections to Sonarr and Radarr reconciled successfully.")
+    configure_bazarr_language_profile(bazarr_key)
     if not jellyfin_key:
         print("Bazarr Jellyfin integration skipped: JELLYFIN_API_KEY is empty.")
         return
@@ -938,6 +939,198 @@ def configure_bazarr(sonarr_key: str, radarr_key: str) -> None:
     print(
         "Bazarr connection to external Jellyfin reconciled and tested "
         f"({JELLYFIN_HOST}:{JELLYFIN_PORT})."
+    )
+
+
+def bazarr_form_request(
+    path: str,
+    api_key: str,
+    fields: dict[str, Any] | list[tuple[str, Any]],
+    expected_status: int = 204,
+) -> None:
+    form = urllib.parse.urlencode(fields, doseq=True).encode("utf-8")
+    request = urllib.request.Request(
+        f"{BAZARR_URL}{path}",
+        data=form,
+        method="POST",
+        headers={
+            "X-API-KEY": api_key,
+            "Content-Type": "application/x-www-form-urlencoded",
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=60) as response:
+            if response.status != expected_status:
+                raise ConfigurationError(
+                    f"Bazarr {path} returned unexpected HTTP {response.status}"
+                )
+    except urllib.error.HTTPError as error:
+        message = error.read().decode("utf-8", errors="replace")
+        raise ConfigurationError(
+            f"Bazarr {path} failed with HTTP {error.code}: {message[:500]}"
+        ) from error
+
+
+def configure_bazarr_language_profile(api_key: str) -> None:
+    profile_name = os.getenv("BAZARR_LANGUAGE_PROFILE_NAME", "Español").strip()
+    language_codes = [
+        code.strip()
+        for code in os.getenv("BAZARR_LANGUAGES", "es,en").split(",")
+        if code.strip()
+    ]
+    if not profile_name or not language_codes:
+        raise ConfigurationError(
+            "BAZARR_LANGUAGE_PROFILE_NAME and BAZARR_LANGUAGES cannot be empty"
+        )
+    if len(language_codes) != len(set(language_codes)):
+        raise ConfigurationError("BAZARR_LANGUAGES contains duplicate codes")
+
+    languages = request_json(
+        "GET", "/api/system/languages", api_key, base_url=BAZARR_URL
+    )
+    available = {str(language["code2"]): language for language in languages}
+    unsupported = [code for code in language_codes if code not in available]
+    if unsupported:
+        raise ConfigurationError(
+            "Bazarr does not support configured language codes: "
+            + ", ".join(unsupported)
+        )
+
+    cutoff_code = os.getenv("BAZARR_LANGUAGE_CUTOFF", language_codes[0]).strip()
+    if cutoff_code not in language_codes:
+        raise ConfigurationError(
+            "BAZARR_LANGUAGE_CUTOFF must be present in BAZARR_LANGUAGES"
+        )
+
+    profiles = request_json(
+        "GET", "/api/system/languages/profiles", api_key, base_url=BAZARR_URL
+    )
+    existing = next(
+        (
+            profile
+            for profile in profiles
+            if str(profile.get("name", "")).casefold() == profile_name.casefold()
+        ),
+        None,
+    )
+    profile_id = (
+        int(existing["profileId"])
+        if existing
+        else max((int(profile["profileId"]) for profile in profiles), default=0) + 1
+    )
+    existing_item_ids = {
+        str(item.get("language")): int(item["id"])
+        for item in (existing or {}).get("items", [])
+        if item.get("language") and item.get("id") is not None
+    }
+    exclude_audio = optional_bool_env("BAZARR_LANGUAGE_EXCLUDE_AUDIO", False)
+    only_if_audio = optional_bool_env("BAZARR_LANGUAGE_ONLY_IF_AUDIO", False)
+    if exclude_audio and only_if_audio:
+        raise ConfigurationError(
+            "BAZARR_LANGUAGE_EXCLUDE_AUDIO and BAZARR_LANGUAGE_ONLY_IF_AUDIO "
+            "cannot both be true"
+        )
+    next_item_id = max(existing_item_ids.values(), default=0) + 1
+    items = []
+    for code in language_codes:
+        item_id = existing_item_ids.get(code)
+        if item_id is None:
+            item_id = next_item_id
+            next_item_id += 1
+        items.append(
+            {
+                "id": item_id,
+                "language": code,
+                "audio_exclude": str(exclude_audio),
+                "audio_only_include": str(only_if_audio),
+                "hi": str(optional_bool_env("BAZARR_LANGUAGE_HI", False)),
+                "forced": str(
+                    optional_bool_env("BAZARR_LANGUAGE_FORCED", False)
+                ),
+            }
+        )
+    cutoff_id = next(item["id"] for item in items if item["language"] == cutoff_code)
+    desired_profile = {
+        "profileId": profile_id,
+        "name": profile_name,
+        "cutoff": cutoff_id,
+        "items": items,
+        "mustContain": [],
+        "mustNotContain": [],
+        "originalFormat": False,
+        "tag": (existing or {}).get("tag"),
+    }
+    updated_profiles = [
+        desired_profile if profile is existing else profile for profile in profiles
+    ]
+    if existing is None:
+        updated_profiles.append(desired_profile)
+
+    series_default = optional_bool_env("BAZARR_APPLY_PROFILE_TO_SERIES", True)
+    movies_default = optional_bool_env("BAZARR_APPLY_PROFILE_TO_MOVIES", True)
+    fields: list[tuple[str, Any]] = [
+        *(('languages-enabled', code) for code in language_codes),
+        ("languages-profiles", json.dumps(updated_profiles)),
+        ("settings-general-serie_default_enabled", str(series_default).lower()),
+        ("settings-general-serie_default_profile", str(profile_id)),
+        ("settings-general-movie_default_enabled", str(movies_default).lower()),
+        ("settings-general-movie_default_profile", str(profile_id)),
+    ]
+    bazarr_form_request("/api/system/settings", api_key, fields)
+
+    assigned_series = 0
+    assigned_movies = 0
+    if optional_bool_env("BAZARR_APPLY_PROFILE_TO_EXISTING", True):
+        series = request_json("GET", "/api/series", api_key, base_url=BAZARR_URL)
+        unassigned_series = [
+            item["sonarrSeriesId"]
+            for item in series.get("data", [])
+            if item.get("profileId") is None
+        ]
+        movies = request_json("GET", "/api/movies", api_key, base_url=BAZARR_URL)
+        unassigned_movies = [
+            item["radarrId"]
+            for item in movies.get("data", [])
+            if item.get("profileId") is None
+        ]
+        for start in range(0, len(unassigned_series), 100):
+            batch = unassigned_series[start : start + 100]
+            bazarr_form_request(
+                "/api/series",
+                api_key,
+                [
+                    pair
+                    for series_id in batch
+                    for pair in (("seriesid", series_id), ("profileid", profile_id))
+                ],
+            )
+            assigned_series += len(batch)
+        for start in range(0, len(unassigned_movies), 100):
+            batch = unassigned_movies[start : start + 100]
+            bazarr_form_request(
+                "/api/movies",
+                api_key,
+                [
+                    pair
+                    for movie_id in batch
+                    for pair in (("radarrid", movie_id), ("profileid", profile_id))
+                ],
+            )
+            assigned_movies += len(batch)
+
+    verified_profiles = request_json(
+        "GET", "/api/system/languages/profiles", api_key, base_url=BAZARR_URL
+    )
+    verified = next(
+        (profile for profile in verified_profiles if profile.get("profileId") == profile_id),
+        None,
+    )
+    if verified is None or [item["language"] for item in verified["items"]] != language_codes:
+        raise ConfigurationError("Bazarr did not persist the configured language profile")
+    print(
+        f"Bazarr language profile '{profile_name}' reconciled "
+        f"({','.join(language_codes)}; cutoff {cutoff_code}); assigned to "
+        f"{assigned_series} existing series and {assigned_movies} existing movies."
     )
 
 

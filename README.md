@@ -296,8 +296,30 @@ Sonarr y Radarr. `configure-stack` también automatiza esas dos conexiones.
 Bazarr tampoco ofrece el modo `disabledForLocalAddresses` ni comparte la API
 de idioma de Servarr. El script no modifica su autenticación ni promete
 configurar el idioma de su UI; por ahora la protección efectiva es publicar su
-puerto exclusivamente en `127.0.0.1`. Sus proveedores y perfiles de idiomas de
-subtítulos se configurarán en una etapa posterior.
+puerto exclusivamente en `127.0.0.1`.
+
+`configure-stack` crea o actualiza un perfil de subtítulos, lo configura como
+predeterminado para películas y series nuevas y lo asigna al contenido
+existente que todavía no tenga perfil. Las excepciones asignadas manualmente se
+preservan. La instalación actual de Bazarr ofrece `es` como español genérico y
+no expone un código separado `es-MX`:
+
+```dotenv
+BAZARR_LANGUAGE_PROFILE_NAME=Español
+BAZARR_LANGUAGES=es,en
+BAZARR_LANGUAGE_CUTOFF=es
+BAZARR_LANGUAGE_FORCED=false
+BAZARR_LANGUAGE_HI=false
+BAZARR_LANGUAGE_EXCLUDE_AUDIO=false
+BAZARR_LANGUAGE_ONLY_IF_AUDIO=false
+BAZARR_APPLY_PROFILE_TO_SERIES=true
+BAZARR_APPLY_PROFILE_TO_MOVIES=true
+BAZARR_APPLY_PROFILE_TO_EXISTING=true
+```
+
+Los proveedores permanecen fuera de esta automatización porque suelen exigir
+cuentas, credenciales o decisiones específicas. OpenSubtitles está excluido
+del stack deliberadamente.
 
 Jellyfin permanece instalado directamente en Windows y no forma parte de este
 Compose. Bazarr puede integrarse con él mediante la API usando:
