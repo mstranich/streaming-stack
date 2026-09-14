@@ -1024,7 +1024,7 @@ def configure_seerr(sonarr_key: str, radarr_key: str) -> None:
     seerr_request_json("POST", "/api/v1/settings/main", main_settings)
 
     jellyfin_key = required_env("JELLYFIN_API_KEY")
-    seerr_request_json(
+    jellyfin_settings = seerr_request_json(
         "POST",
         "/api/v1/settings/jellyfin",
         {
@@ -1033,30 +1033,58 @@ def configure_seerr(sonarr_key: str, radarr_key: str) -> None:
             "apiKey": jellyfin_key,
         },
     )
-    libraries = seerr_request_json("GET", "/api/v1/settings/jellyfin/library")
-    # The setup wizard normally performs the first library discovery. Calling
-    # the sync endpoint again can return HTTP 404 when Jellyfin exposes no new
-    # views, even though Seerr already has valid libraries saved.
-    if not libraries:
+    libraries = jellyfin_settings.get("libraries", [])
+    previously_enabled = [
+        str(library["id"])
+        for library in libraries
+        if library.get("enabled") and library.get("id")
+    ]
+    sync_query = urllib.parse.urlencode(
+        {"sync": "true", "enable": ",".join(previously_enabled)}
+    )
+    try:
         libraries = seerr_request_json(
-            "POST", "/api/v1/settings/jellyfin/library/sync"
+            "GET", f"/api/v1/settings/jellyfin/library?{sync_query}"
         )
-    for library in libraries:
-        if str(library.get("type", "")).casefold() in {"movie", "show", "tvshows"}:
-            try:
-                seerr_request_json(
-                    "PUT",
-                    f"/api/v1/settings/jellyfin/library/{library['id']}",
-                    {"enabled": True},
-                )
-            except ConfigurationError as error:
-                # Seerr 3.4.1 can list Jellyfin libraries but return 404 when
-                # enabling the same IDs. Do not let that upstream API defect
-                # prevent Sonarr/Radarr configuration.
-                print(
-                    f"Seerr library '{library.get('name', library['id'])}' "
-                    f"must be enabled manually: {error}"
-                )
+    except ConfigurationError:
+        if not libraries:
+            raise
+        print("Seerr Jellyfin library refresh failed; using saved libraries.")
+
+    selected = [
+        library
+        for library in libraries
+        if library.get("id")
+        and str(library.get("type", "")).casefold()
+        in {"movie", "show", "tvshows"}
+    ]
+    if not selected:
+        raise ConfigurationError(
+            "Seerr did not report any Jellyfin movie or TV libraries"
+        )
+    enabled_ids = [str(library["id"]) for library in selected]
+    enable_query = urllib.parse.urlencode({"enable": ",".join(enabled_ids)})
+    libraries = seerr_request_json(
+        "GET", f"/api/v1/settings/jellyfin/library?{enable_query}"
+    )
+    enabled_after = {
+        str(library["id"])
+        for library in libraries
+        if library.get("enabled") and library.get("id")
+    }
+    missing = [
+        library.get("name", library["id"])
+        for library in selected
+        if str(library["id"]) not in enabled_after
+    ]
+    if missing:
+        raise ConfigurationError(
+            "Seerr did not enable Jellyfin libraries: " + ", ".join(missing)
+        )
+    print(
+        "Seerr Jellyfin libraries enabled: "
+        + ", ".join(str(library.get("name", library["id"])) for library in selected)
+    )
     configure_seerr_service(
         "Radarr", radarr_key, "/data/media/Movies", "SEERR_RADARR_PROFILE"
     )

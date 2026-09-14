@@ -59,16 +59,13 @@ def main() -> int:
             else:
                 child.unlink()
         shutil.copytree(extracted / "config", TARGET / "config", dirs_exist_ok=True)
+        # Backups made before Seerr moved under ./config stored it as a
+        # separate top-level directory. Import that legacy layout into the
+        # current bind-mounted location.
         if (extracted / "seerr-config").is_dir():
-            seerr_target = TARGET / "seerr-config"
-            for child in seerr_target.iterdir():
-                if child.is_dir():
-                    shutil.rmtree(child)
-                else:
-                    child.unlink()
-            shutil.copytree(
-                extracted / "seerr-config", seerr_target, dirs_exist_ok=True
-            )
+            seerr_target = TARGET / "config" / "seerr"
+            shutil.rmtree(seerr_target, ignore_errors=True)
+            shutil.copytree(extracted / "seerr-config", seerr_target)
         shutil.copy2(extracted / ".env", TARGET / ".env")
 
     print(f"Restored configuration from {requested}")

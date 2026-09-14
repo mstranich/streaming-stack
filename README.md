@@ -325,16 +325,11 @@ docker compose up -d
 
 Seerr ofrece la interfaz de solicitudes y se comunica directamente con
 Jellyfin, Sonarr y Radarr. No necesita conexión directa a Prowlarr,
-Transmission o Bazarr. Su configuración SQLite reside en el volumen nombrado
-`seerr-config`, no en un bind mount de Windows, para evitar problemas de
-locking y corrupción documentados por el proyecto.
-
-Durante el asistente Seerr puede mostrar que `/app/config` no está montado. Es
-un falso positivo conocido con volúmenes nombrados: `docker inspect` debe
-mostrar `volume ... /app/config`. En este stack también se verificó que
-`settings.json` conserva el mismo checksum después de `docker compose restart
-seerr`. No reemplazar el volumen por un bind mount de Windows para ocultar el
-aviso.
+Transmission o Bazarr. Su configuración reside en el bind mount
+`./config/seerr:/app/config`, igual que la del resto de los servicios. Esto
+facilita inspeccionar, respaldar y migrar la base SQLite entre motores Docker.
+Al tratarse de NTFS compartido con WSL2, se debe vigilar el log de Seerr y
+probar reinicios para detectar errores de locking o corrupción.
 
 Antes del primer arranque, generar una clave dedicada y definir las URLs de
 Jellyfin en `.env`:
@@ -390,11 +385,11 @@ El portproxy es TCP y no requiere habilitar `trustProxy` en Seerr.
 
 Mientras `initialized=false`, el configurador informa que Seerr queda diferido
 y continúa sin modificarlo. Después del asistente, reconcilia idioma, título,
-Jellyfin y los servicios Sonarr/Radarr. Seerr 3.4.1 devuelve HTTP 404 al intentar
-activar por API bibliotecas que sí lista correctamente; por ahora `Películas` y
-`Programas` deben habilitarse manualmente en la UI. Los
-perfiles pueden fijarse por nombre; si quedan vacíos se usa el primero que
-devuelve cada API:
+Jellyfin, habilita automáticamente sus bibliotecas de películas y series, y
+configura los servicios Sonarr/Radarr. La API de Seerr realiza esta selección
+mediante el parámetro `enable` de `GET /api/v1/settings/jellyfin/library`; no
+existe un recurso individual actualizable mediante `PUT`. Los perfiles pueden
+fijarse por nombre; si quedan vacíos se usa el primero que devuelve cada API:
 
 ```dotenv
 SEERR_RADARR_PROFILE=
@@ -444,7 +439,7 @@ docker compose logs --tail 200 prowlarr jackett flaresolverr sonarr radarr bazar
 
 ### Backup y restauración
 
-El backup contiene `config/`, el volumen `seerr-config` y `.env`, por lo tanto
+El backup contiene `config/` —incluido Seerr— y `.env`, por lo tanto
 contiene bases de datos, contraseñas y API keys. `backups/` está ignorado por
 Git; copie cada archivo y su `.sha256` a un almacenamiento externo protegido.
 
@@ -508,9 +503,7 @@ docker compose up -d --force-recreate <servicio>
 ```
 
 Si la aplicación migró su base de datos de forma incompatible, mantener el
-stack detenido, restaurar el backup correspondiente y volver a iniciar. No se
-debe ejecutar `docker compose down -v`: borraría el volumen `seerr-config` y su
-base de datos.
+stack detenido, restaurar el backup correspondiente y volver a iniciar.
 
 ## Incorporación de futuros servicios
 
