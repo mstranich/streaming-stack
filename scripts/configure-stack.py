@@ -115,6 +115,9 @@ def read_jackett_api_key() -> str:
 
 
 def read_bazarr_api_key() -> str:
+    environment_key = os.getenv("BAZARR_API_KEY", "").strip()
+    if environment_key:
+        return environment_key
     try:
         content = BAZARR_CONFIG.read_text(encoding="utf-8")
     except OSError as error:
@@ -126,7 +129,12 @@ def read_bazarr_api_key() -> str:
         elif in_auth and line and not line.startswith(" "):
             break
         elif in_auth and line.strip().startswith("apikey:"):
-            return line.split(":", 1)[1].strip().strip("'\"")
+            api_key = line.split(":", 1)[1].strip().strip("'\"")
+            if api_key.startswith("enc:"):
+                raise ConfigurationError(
+                    "Bazarr+ encrypts its API key at rest; set BAZARR_API_KEY in .env"
+                )
+            return api_key
     raise ConfigurationError("Bazarr config does not contain an API key")
 
 
@@ -1047,6 +1055,7 @@ def configure_bazarr_language_profile(api_key: str) -> None:
                 "forced": str(
                     optional_bool_env("BAZARR_LANGUAGE_FORCED", False)
                 ),
+                "translate_from": None,
             }
         )
     cutoff_id = next(item["id"] for item in items if item["language"] == cutoff_code)

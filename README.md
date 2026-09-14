@@ -274,13 +274,13 @@ Los scripts Python concentran la automatización del proyecto:
 - `scripts/init-jackett-config.py`: inicializa Jackett y su conexión a FlareSolverr.
 - `scripts/configure-stack.py`: configura APIs después del arranque.
 
-## Sonarr, Radarr, Bazarr y Seerr
+## Sonarr, Radarr, Bazarr+ y Seerr
 
 Los tres servicios se publican sólo en loopback:
 
 - Sonarr: [http://localhost:8989](http://localhost:8989)
 - Radarr: [http://localhost:7878](http://localhost:7878)
-- Bazarr: [http://localhost:6767](http://localhost:6767)
+- Bazarr+: [http://localhost:6767](http://localhost:6767)
 - Seerr: [http://localhost:5055](http://localhost:5055)
 
 Sonarr utiliza `/data/media/TV` como carpeta raíz y la categoría `tv` de
@@ -293,7 +293,7 @@ internas y sincronización completa de indexers. Bazarr no es una Application
 compatible de Prowlarr: es Bazarr quien consume directamente las APIs de
 Sonarr y Radarr. `configure-stack` también automatiza esas dos conexiones.
 
-Bazarr tampoco ofrece el modo `disabledForLocalAddresses` ni comparte la API
+Bazarr+ tampoco ofrece el modo `disabledForLocalAddresses` ni comparte la API
 de idioma de Servarr. El script no modifica su autenticación ni promete
 configurar el idioma de su UI; por ahora la protección efectiva es publicar su
 puerto exclusivamente en `127.0.0.1`.
@@ -320,6 +320,20 @@ BAZARR_APPLY_PROFILE_TO_EXISTING=true
 Los proveedores permanecen fuera de esta automatización porque suelen exigir
 cuentas, credenciales o decisiones específicas. OpenSubtitles está excluido
 del stack deliberadamente.
+
+El servicio usa Bazarr+ `2.6.2`, migrado sobre el mismo directorio `/config` de
+Bazarr upstream. Provider Hub permite instalar proveedores desde el catálogo
+oficial sin incorporarlos al Compose:
+
+```text
+https://raw.githubusercontent.com/LavX/bazarr-provider-catalog/main/catalog.json
+```
+
+El catálogo queda disponible para exploración, pero la instalación,
+habilitación, prioridad y credenciales de cada proveedor son decisiones
+manuales del operador. Antes de volver a Bazarr upstream se debe restaurar el
+backup completo previo a la migración; cambiar solamente la imagen no revierte
+las migraciones de configuración y autenticación.
 
 Jellyfin permanece instalado directamente en Windows y no forma parte de este
 Compose. Bazarr puede integrarse con él mediante la API usando:

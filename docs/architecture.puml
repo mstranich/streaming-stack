@@ -18,7 +18,7 @@ rectangle "Rancher Desktop / Moby" {
   component "FlareSolverr\n:8191" as flare
   component "Sonarr\n:8989" as sonarr
   component "Radarr\n:7878" as radarr
-  component "Bazarr\n:6767" as bazarr
+  component "Bazarr+\n:6767" as bazarr
   component "Transmission\n:9091" as transmission
   component "init-data\n(one-shot)" as init
   component "configure-stack\n(one-shot)" as config

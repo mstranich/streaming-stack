@@ -210,7 +210,7 @@ services:
 
   bazarr:
     <<: *service-hardening
-    image: ${BAZARR_IMAGE:-lscr.io/linuxserver/bazarr:version-v1.6.0}
+    image: ${BAZARR_IMAGE:-ghcr.io/lavx/bazarr:2.6.2}
     environment: *servarr-environment
     extra_hosts: *windows-host
     depends_on:
@@ -287,6 +287,7 @@ services:
       RADARR_CONFIG: /config/radarr/config.xml
       BAZARR_URL: http://bazarr:6767
       BAZARR_CONFIG: /config/bazarr/config/config.yaml
+      BAZARR_API_KEY: ${BAZARR_API_KEY:-}
       BAZARR_LANGUAGE_PROFILE_NAME: ${BAZARR_LANGUAGE_PROFILE_NAME:-Español}
       BAZARR_LANGUAGES: ${BAZARR_LANGUAGES:-es,en}
       BAZARR_LANGUAGE_CUTOFF: ${BAZARR_LANGUAGE_CUTOFF:-es}
